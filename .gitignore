@@ -1,0 +1,10 @@
+# Ignore raw camera input and processed output
+input/
+output/
+
+# Python cache and logs
+__pycache__/
+*.log
+
+# VS Code settings
+.vscode/
