@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 from datetime import datetime, timedelta
 import re
+import argparse
 
 OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
@@ -20,34 +21,36 @@ def find_mp4_files(root):
             if filename.endswith('.mp4'):
                 yield Path(dirpath) / filename
 
-# Group files by camera and 12-hour period
-def group_files(files):
+# Group files by camera and day
+def group_files_by_day(files):
     groups = {}
     for f in files:
         m = FILENAME_RE.search(str(f))
         if not m:
             continue
-        timestamp, camera_id = m.group(1), m.group(2)
+        timestamp = m.group(1)
         dt = datetime.fromtimestamp(int(timestamp))
-        # Calculate 12-hour period start
-        period_start = dt.replace(hour=(dt.hour // SEGMENT_DURATION_HOURS) * SEGMENT_DURATION_HOURS, minute=0, second=0, microsecond=0)
-        key = (camera_id, period_start)
+        day_start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        key = day_start
         groups.setdefault(key, []).append((dt, f))
     # Sort files in each group by time
     for k in groups:
         groups[k].sort()
     return groups
 
-def merge_group(camera_id, period_start, files, summary):
+def merge_group(period_start, files, summary, split_idx=None, total_splits=None):
     out_dir = MERGED_ROOT / period_start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
     start_str = period_start.strftime('%Y%m%d_%H%M')
-    end_dt = period_start + timedelta(hours=SEGMENT_DURATION_HOURS)
+    end_dt = period_start + timedelta(hours=24 // (total_splits or 1))
     end_str = end_dt.strftime('%Y%m%d_%H%M')
-    out_name = f"{camera_id}_{start_str}_{end_str}.mp4"
+    if split_idx is not None and total_splits is not None:
+        out_name = f"merged_{start_str}_{end_str}_part{split_idx+1}of{total_splits}.mp4"
+    else:
+        out_name = f"merged_{start_str}_{end_str}.mp4"
     out_path = out_dir / out_name
     # Create filelist.txt for ffmpeg concat
-    filelist_path = out_dir / f"filelist_{camera_id}_{start_str}.txt"
+    filelist_path = out_dir / f"filelist_{start_str}.txt"
     with open(filelist_path, 'w') as f:
         for _, file in files:
             f.write(f"file '{file.resolve()}'\n")
@@ -64,11 +67,23 @@ def merge_group(camera_id, period_start, files, summary):
     filelist_path.unlink()
 
 def main():
+    parser = argparse.ArgumentParser(description="Merge .mp4 segments into longer clips per camera and time period.")
+    parser.add_argument('--splits-per-day', type=int, default=1, help='Number of merged .mp4 files to create per day per camera (default: 1, i.e. all segments merged into one file per day).')
+    args = parser.parse_args()
+
     mp4_files = list(find_mp4_files(OUTPUT_ROOT))
-    groups = group_files(mp4_files)
+    groups = group_files_by_day(mp4_files)
     summary = []
-    for (camera_id, period_start), files in groups.items():
-        merge_group(camera_id, period_start, files, summary)
+    for day_start, files in groups.items():
+        n = max(1, args.splits_per_day)
+        total = len(files)
+        split_size = (total + n - 1) // n  # ceil division
+        for i in range(n):
+            split_files = files[i*split_size:(i+1)*split_size]
+            if not split_files:
+                continue
+            split_period_start = day_start + timedelta(hours=(i * 24 // n))
+            merge_group(split_period_start, split_files, summary, split_idx=i, total_splits=n)
     # Write summary report
     MERGED_ROOT.mkdir(parents=True, exist_ok=True)
     with open(SUMMARY_REPORT, 'w') as f:
