@@ -3,7 +3,7 @@
 This project processes segmented `.media` files from Green Feathers wildlife cameras, converting them to `.mp4` and merging them into longer video clips. Follow these guidelines to maximize productivity:
 
 ## Project Architecture
-- **Input Directory**: All raw camera files are under `input/DCIM/YYYY/MM/DD/HHMMSS_cameraid/`.
+- **Input Directory**: All raw camera files are under `input/DCIM/YYYY/MM/DD/groupid/`.
 - **.media Files**: Each subfolder contains many `.media` files (short video segments) and a `.info` file (metadata).
 - **Output Structure**: Place converted `.mp4` files and merged clips in a clearly organized output directory (suggest: `output/` with similar date-based structure).
 

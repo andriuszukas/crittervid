@@ -23,6 +23,10 @@ def main():
     parser.add_argument('--accel', choices=['cpu', 'cuda', 'qsv', 'vaapi', 'amf', 'auto'], default=None, help='Hardware acceleration type for conversion (default: auto)')
     parser.add_argument('--workers', type=int, default=None, help='Number of parallel conversions (default: 4)')
     parser.add_argument('--copy', action='store_true', help='Copy video stream without re-encoding (fast, requires compatible input)')
+    parser.add_argument('--validate', dest='validate', action='store_true', help='Run output validation after merging (default: enabled).')
+    parser.add_argument('--no-validate', dest='validate', action='store_false', help='Skip output validation step (faster, not recommended for final results).')
+    parser.add_argument('--splits-per-day', type=int, default=None, help='Number of merged .mp4 files to create per day per camera (forwarded to merge_videos.py).')
+    parser.set_defaults(validate=True)
     args = parser.parse_args()
 
 
@@ -41,24 +45,37 @@ def main():
     else:
         rc1 = subprocess.run([sys.executable, CONVERT_SCRIPT] + convert_args).returncode
 
-    print("=== Step 2: Merge .mp4 files into 12-hour clips ===")
-    rc2 = run_script(MERGE_SCRIPT, args.dry_run)
-
-    print("=== Step 3: Validate output and directory structure ===")
-    validate_args = []
-    if args.workers:
-        validate_args += ['--workers', str(args.workers)]
-    if args.accel:
-        validate_args += ['--accel', args.accel]
+    print("=== Step 2: Merge .mp4 files into longer clips ===")
+    merge_args = []
+    if args.splits_per_day:
+        merge_args += ['--splits-per-day', str(args.splits_per_day)]
     if args.dry_run:
-        print(f"[DRY RUN] Would run: python validate_output.py {' '.join(validate_args)}")
+        print(f"[DRY RUN] Would run: python {MERGE_SCRIPT} {' '.join(merge_args)}")
+        rc2 = 0
     else:
-        rc3 = subprocess.run([sys.executable, 'validate_output.py'] + validate_args).returncode
+        rc2 = subprocess.run([sys.executable, MERGE_SCRIPT] + merge_args).returncode
+
+    if args.validate:
+        print("=== Step 3: Validate output and directory structure ===")
+        validate_args = []
+        if args.workers:
+            validate_args += ['--workers', str(args.workers)]
+        if args.accel:
+            validate_args += ['--accel', args.accel]
+        if args.dry_run:
+            print(f"[DRY RUN] Would run: python validate_output.py {' '.join(validate_args)}")
+        else:
+            rc3 = subprocess.run([sys.executable, 'validate_output.py'] + validate_args).returncode
+    else:
+        print("=== Step 3: Validation skipped (use --validate to enable) ===")
 
     print("=== Summary ===")
     print("Conversion summary: output/conversion_summary.txt")
     print("Merging summary: output/merged/merge_summary.txt")
-    print("Validation: see console output above")
+    if args.validate:
+        print("Validation: see console output above")
+    else:
+        print("Validation: skipped")
     if rc1 == 0 and rc2 == 0:
         print("All steps completed successfully.")
     else:
