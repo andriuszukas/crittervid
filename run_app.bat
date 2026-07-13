@@ -1,0 +1,3 @@
+@echo off
+echo Starting CritterVid...
+streamlit run app.py --server.headless=true

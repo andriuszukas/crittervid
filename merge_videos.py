@@ -5,14 +5,15 @@ import subprocess
 from datetime import datetime, timedelta
 import re
 import argparse
+from ffmpeg_helper import get_ffmpeg_path
 
 OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
-FFMPEG_PATH = 'ffmpeg'  # Assumes ffmpeg is in PATH
+FFMPEG_PATH = get_ffmpeg_path()  # Auto-detect ffmpeg location
 SEGMENT_DURATION_HOURS = 12
 SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
 
-# Regex to extract timestamp and camera ID from filename
+# Regex to extract timestamp and group ID from filename
 FILENAME_RE = re.compile(r'(\d{10,})_(\d{4})_\d+\.mp4$')
 
 def find_mp4_files(root):
@@ -21,7 +22,7 @@ def find_mp4_files(root):
             if filename.endswith('.mp4'):
                 yield Path(dirpath) / filename
 
-# Group files by camera and day
+# Group files by day
 def group_files_by_day(files):
     groups = {}
     for f in files:
@@ -67,9 +68,16 @@ def merge_group(period_start, files, summary, split_idx=None, total_splits=None)
     filelist_path.unlink()
 
 def main():
-    parser = argparse.ArgumentParser(description="Merge .mp4 segments into longer clips per camera and time period.")
-    parser.add_argument('--splits-per-day', type=int, default=1, help='Number of merged .mp4 files to create per day per camera (default: 1, i.e. all segments merged into one file per day).')
+    parser = argparse.ArgumentParser(description="Merge .mp4 segments into longer clips per group and time period.")
+    parser.add_argument('--output-dir', type=str, default='output', help='Output directory containing .mp4 files to merge (default: output)')
+    parser.add_argument('--splits-per-day', type=int, default=1, help='Number of merged .mp4 files to create per day per group (default: 1, i.e. all segments merged into one file per day).')
     args = parser.parse_args()
+
+    # Update global paths based on arguments
+    global OUTPUT_ROOT, MERGED_ROOT, SUMMARY_REPORT
+    OUTPUT_ROOT = Path(args.output_dir)
+    MERGED_ROOT = OUTPUT_ROOT / 'merged'
+    SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
 
     mp4_files = list(find_mp4_files(OUTPUT_ROOT))
     groups = group_files_by_day(mp4_files)

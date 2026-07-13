@@ -8,3 +8,12 @@ __pycache__/
 
 # VS Code settings
 .vscode/
+
+# PyInstaller build artifacts
+build/
+dist/
+
+# Bundled FFmpeg binary (too large for GitHub; download separately)
+ffmpeg.exe
+ffmpeg
+*.exe

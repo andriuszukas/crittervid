@@ -1,0 +1,9 @@
+# Core dependencies
+streamlit==1.50.0
+
+# GPU detection (optional, for auto-detection of hardware acceleration)
+GPUtil==1.4.0
+WMI==1.5.1
+
+# Build tool for standalone executable
+pyinstaller==6.11.1

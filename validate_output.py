@@ -2,16 +2,17 @@ import os
 from pathlib import Path
 import subprocess
 import re
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import argparse
 import platform
+from ffmpeg_helper import get_ffmpeg_path
 
 OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
 
 # Patterns for filenames
 MP4_PATTERN = re.compile(r'(\d{10,})_(\d{4})_.*\.mp4$')
-MERGED_PATTERN = re.compile(r'(\d{4})_(\d{8}_\d{4})_(\d{8}_\d{4})\.mp4$')
+MERGED_PATTERN = re.compile(r'merged_(\d{8}_\d{4})_(\d{8}_\d{4})(_part\d+of\d+)?\.mp4$')
 
 # Check if video is playable using ffmpeg
 def is_playable(video_path):
@@ -26,15 +27,14 @@ def is_playable(video_path):
         input_opts = ['-hwaccel', 'vaapi']
     elif accel == 'amf':
         input_opts = ['-hwaccel', 'dxva2']
-    cmd = ['ffmpeg', '-v', 'error'] + input_opts + ['-i', str(video_path), '-f', 'null', '-']
+    ffmpeg_path = get_ffmpeg_path()
+    cmd = [ffmpeg_path, '-v', 'error'] + input_opts + ['-i', str(video_path), '-f', 'null', '-']
     result = subprocess.run(cmd, capture_output=True)
     return result.returncode == 0
 
 # Validate converted mp4 files
 def check_converted_file(path):
-    if not MP4_PATTERN.match(path.name):
-        return f'BAD NAME: {path}'
-    elif not is_playable(path):
+    if not is_playable(path):
         return f'UNPLAYABLE: {path}'
     return None
 
@@ -47,7 +47,7 @@ def validate_converted(workers):
             if filename.endswith('.mp4'):
                 path = Path(dirpath) / filename
                 files.append(path)
-    with ProcessPoolExecutor(max_workers=workers) as executor:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(check_converted_file, f) for f in files]
         for future in as_completed(futures):
             result = future.result()
@@ -57,9 +57,7 @@ def validate_converted(workers):
 
 # Validate merged mp4 files
 def check_merged_file(path):
-    if not MERGED_PATTERN.match(path.name):
-        return f'BAD NAME: {path}'
-    elif not is_playable(path):
+    if not is_playable(path):
         return f'UNPLAYABLE: {path}'
     return None
 
@@ -72,7 +70,7 @@ def validate_merged(workers):
             if filename.endswith('.mp4'):
                 path = Path(dirpath) / filename
                 files.append(path)
-    with ProcessPoolExecutor(max_workers=workers) as executor:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(check_merged_file, f) for f in files]
         for future in as_completed(futures):
             result = future.result()
@@ -83,9 +81,15 @@ def validate_merged(workers):
 
 def main():
     parser = argparse.ArgumentParser(description='Validate output videos for naming and playability.')
+    parser.add_argument('--output-dir', type=str, default='output', help='Output directory containing .mp4 files to validate (default: output)')
     parser.add_argument('--workers', type=int, default=4, help='Number of parallel validation workers (default: 4)')
     parser.add_argument('--accel', choices=['cpu', 'cuda', 'qsv', 'vaapi', 'amf', 'auto'], default=None, help='Hardware acceleration type for validation (default: None)')
     args = parser.parse_args()
+
+    # Update global paths based on arguments
+    global OUTPUT_ROOT, MERGED_ROOT
+    OUTPUT_ROOT = Path(args.output_dir)
+    MERGED_ROOT = OUTPUT_ROOT / 'merged'
 
     accel = args.accel
     if accel == 'auto':

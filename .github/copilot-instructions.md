@@ -1,4 +1,4 @@
-# Copilot Instructions for GardenCamera
+# Copilot Instructions for crittervid
 
 This project processes segmented `.media` files from Green Feathers wildlife cameras, converting them to `.mp4` and merging them into longer video clips. Follow these guidelines to maximize productivity:
 
