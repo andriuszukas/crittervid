@@ -85,6 +85,14 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for full build and distribution instructions.
 build.bat
 ```
 
+## Acknowledgments
+
+This tool exists thanks to the research of
+[**Dr. Filipe Ribeiro da Cunha**](https://www.wur.nl/en/persons/fc-filipe-ribeiro-da-cunha-phd)
+and his team at **Wageningen University**, whose work motivated and made possible
+the wildlife-footage processing this pipeline automates. With gratitude for their
+contribution to the field.
+
 ## License
 
 [MIT](LICENSE) © 2026 Andrius Zukas
