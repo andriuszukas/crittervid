@@ -77,6 +77,16 @@ output/
   merged/merge_summary.txt
 ```
 
+## Running tests
+
+```bash
+python -m pytest
+```
+
+Most tests use a stand-in for FFmpeg (`tests/fake_ffmpeg.py`) and run anywhere.
+The end-to-end tests in `tests/test_real_ffmpeg.py` use the real FFmpeg and are
+skipped when it isn't on your `PATH`.
+
 ## Building a standalone executable
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for full build and distribution instructions.
