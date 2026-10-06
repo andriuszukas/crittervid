@@ -7,3 +7,6 @@ WMI==1.5.1
 
 # Build tool for standalone executable
 pyinstaller==6.11.1
+
+# Tests
+pytest==9.1.1

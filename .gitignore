@@ -4,6 +4,7 @@ output/
 
 # Python cache and logs
 __pycache__/
+.pytest_cache/
 *.log
 
 # VS Code settings

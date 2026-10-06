@@ -148,9 +148,12 @@ if st.button("Run"):
     output_text = ""
     line_count = 0
 
-    # Run process with live output streaming
+    # Run process with live output streaming. PYTHONUNBUFFERED is inherited by
+    # every pipeline stage, so their output arrives promptly and in order
+    env = dict(os.environ, PYTHONUNBUFFERED="1")
     process = subprocess.Popen(
         cmd,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

@@ -28,6 +28,9 @@ def run_script(script, dry_run):
 
 
 def main():
+    # Flush each line so step headers stay in order with the child scripts' output
+    # when stdout is a pipe (e.g. the GUI or `| tee`)
+    sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description="Convert and merge Green Feathers camera videos.")
     parser.add_argument('--input-dir', type=str, default='input/DCIM', help='Input directory containing .media files (default: input/DCIM)')
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory for converted .mp4 files (default: output)')
@@ -106,8 +109,9 @@ def main():
         print("Validation: skipped")
     if rc1 == 0 and rc2 == 0 and rc3 == 0:
         print("All steps completed successfully.")
-    else:
-        print("Some steps failed. Check logs above and summary reports.")
+        return 0
+    print("Some steps failed. Check logs above and summary reports.")
+    return 1
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

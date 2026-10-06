@@ -1,0 +1,46 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        # 3.10 is the oldest Python pytest 9 supports; 3.13 is what the .exe ships
+        python: ['3.10', '3.13']
+    env:
+      # Fail rather than skip the real-FFmpeg tests if FFmpeg didn't install
+      CRITTERVID_REQUIRE_FFMPEG: '1'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      # The pipeline scripts only need the standard library; requirements.txt also
+      # pulls in Windows-only and GUI packages, so install just the test runner
+      - name: Install pytest
+        shell: bash
+        run: python -m pip install "$(grep '^pytest==' requirements.txt)"
+
+      - name: Run tests
+        run: python -m pytest -v
