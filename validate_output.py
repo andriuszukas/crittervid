@@ -4,6 +4,7 @@ import subprocess
 import re
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import argparse
+import sys
 import platform
 from ffmpeg_helper import get_ffmpeg_path
 
@@ -119,5 +120,7 @@ def main():
     else:
         print('All output videos are correctly named and playable.')
 
+    return 1 if errors else 0
+
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

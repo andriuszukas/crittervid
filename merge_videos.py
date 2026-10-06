@@ -5,6 +5,7 @@ import subprocess
 from datetime import datetime, timedelta
 import re
 import argparse
+import sys
 from ffmpeg_helper import get_ffmpeg_path
 
 OUTPUT_ROOT = Path('output')
@@ -50,22 +51,28 @@ def merge_group(period_start, files, summary, split_idx=None, total_splits=None)
     else:
         out_name = f"merged_{start_str}_{end_str}.mp4"
     out_path = out_dir / out_name
+    # Write to a temp file and rename on success, so a failed merge never leaves
+    # a broken file that looks like a finished one
+    tmp_path = out_dir / (out_name + '.part')
     # Create filelist.txt for ffmpeg concat
     filelist_path = out_dir / f"filelist_{start_str}.txt"
     with open(filelist_path, 'w') as f:
         for _, file in files:
             f.write(f"file '{file.resolve()}'\n")
-    cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', str(filelist_path), '-c', 'copy', str(out_path)]
+    cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', str(filelist_path), '-c', 'copy', '-f', 'mp4', str(tmp_path)]
     result = subprocess.run(cmd, capture_output=True)
+    filelist_path.unlink()
     if result.returncode != 0:
+        tmp_path.unlink(missing_ok=True)
         error_msg = f"Failed to merge {out_name}: {result.stderr.decode()}"
         print(error_msg)
         summary.append(f"ERROR: {error_msg}")
-    else:
-        success_msg = f"Merged {len(files)} files -> {out_path}"
-        print(success_msg)
-        summary.append(f"SUCCESS: {success_msg}")
-    filelist_path.unlink()
+        return False
+    tmp_path.replace(out_path)
+    success_msg = f"Merged {len(files)} files -> {out_path}"
+    print(success_msg)
+    summary.append(f"SUCCESS: {success_msg}")
+    return True
 
 def main():
     parser = argparse.ArgumentParser(description="Merge .mp4 segments into longer clips per group and time period.")
@@ -82,6 +89,7 @@ def main():
     mp4_files = list(find_mp4_files(OUTPUT_ROOT))
     groups = group_files_by_day(mp4_files)
     summary = []
+    failed = 0
     for day_start, files in groups.items():
         n = max(1, args.splits_per_day)
         total = len(files)
@@ -91,7 +99,8 @@ def main():
             if not split_files:
                 continue
             split_period_start = day_start + timedelta(hours=(i * 24 // n))
-            merge_group(split_period_start, split_files, summary, split_idx=i, total_splits=n)
+            if not merge_group(split_period_start, split_files, summary, split_idx=i, total_splits=n):
+                failed += 1
     # Write summary report
     MERGED_ROOT.mkdir(parents=True, exist_ok=True)
     with open(SUMMARY_REPORT, 'w') as f:
@@ -99,5 +108,7 @@ def main():
             f.write(line + '\n')
     print(f"Summary report written to {SUMMARY_REPORT}")
 
+    return 1 if failed else 0
+
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

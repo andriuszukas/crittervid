@@ -3,6 +3,7 @@ import os
 import subprocess
 from pathlib import Path
 import argparse
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import platform
 from ffmpeg_helper import get_ffmpeg_path
@@ -66,6 +67,7 @@ def find_media_files(root):
 # Convert .media to .mp4, preserving timestamp and group ID
 def convert_media_file(media_path, summary, accel, failed_files):
     parts = media_path.parts
+    tmp_path = None
     try:
         yyyy, mm, dd = parts[-5], parts[-4], parts[-3]
         folder = parts[-2]  # unix_timestamp_groupid
@@ -74,6 +76,9 @@ def convert_media_file(media_path, summary, accel, failed_files):
         out_dir.mkdir(parents=True, exist_ok=True)
         out_name = f"{timestamp}_{group_id}_{media_path.stem}.mp4"
         out_path = out_dir / out_name
+        # Write to a temp file and rename on success, so an interrupted or failed
+        # conversion never leaves a partial .mp4 that later runs would skip
+        tmp_path = out_dir / (out_name + '.part')
         if out_path.exists():
             skip_msg = f"SKIPPED: {media_path} -> {out_path} (already exists)"
             print(skip_msg)
@@ -81,7 +86,7 @@ def convert_media_file(media_path, summary, accel, failed_files):
             return True
         # Check for copy mode
         if hasattr(convert_media_file, 'copy_mode') and convert_media_file.copy_mode:
-            cmd = [FFMPEG_PATH, '-y', '-i', str(media_path), '-c:v', 'copy', str(out_path)]
+            cmd = [FFMPEG_PATH, '-y', '-i', str(media_path), '-c:v', 'copy', '-f', 'mp4', str(tmp_path)]
         else:
             input_opts = []
             output_opts = []
@@ -98,15 +103,17 @@ def convert_media_file(media_path, summary, accel, failed_files):
                 input_opts = ['-hwaccel', 'dxva2']
                 output_opts = ['-c:v', 'h264_amf']
             # CPU: no extra options
-            cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', str(media_path)] + output_opts + [str(out_path)]
+            cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', str(media_path)] + output_opts + ['-f', 'mp4', str(tmp_path)]
         result = subprocess.run(cmd, capture_output=True)
         if result.returncode != 0:
+            tmp_path.unlink(missing_ok=True)
             error_msg = f"ERROR: Failed to convert {media_path}: {result.stderr.decode()}"
             print(error_msg)
             summary.append(error_msg)
             failed_files.append(str(media_path))
             return False
         else:
+            tmp_path.replace(out_path)
             if hasattr(convert_media_file, 'copy_mode') and convert_media_file.copy_mode:
                 success_msg = f"SUCCESS: Copied {media_path} -> {out_path} [copy]"
             else:
@@ -115,6 +122,8 @@ def convert_media_file(media_path, summary, accel, failed_files):
             summary.append(success_msg)
             return True
     except Exception as e:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         error_msg = f"ERROR: Error processing {media_path}: {e}"
         print(error_msg)
         summary.append(error_msg)
@@ -174,6 +183,7 @@ def main():
     summary = []
     failed_files = []
     retry_count = 0
+    interrupted = False
     max_retries = args.max_retries if args.retry_failed else 1
 
     while retry_count < max_retries:
@@ -193,6 +203,7 @@ def main():
         except KeyboardInterrupt:
             print("\nConversion interrupted by user (Ctrl+C). Writing partial summary...")
             summary.append("PROCESS INTERRUPTED: Conversion stopped by user.")
+            interrupted = True
             break
 
         # Check if we should retry
@@ -225,5 +236,7 @@ def main():
             FAILED_FILES.unlink()
         print("All conversions completed successfully!")
 
+    return 1 if failed_files or interrupted else 0
+
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
