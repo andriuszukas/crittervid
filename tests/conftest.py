@@ -80,7 +80,10 @@ def ws(tmp_path, fake_ffmpeg_dir):
 
 @pytest.fixture
 def real_ws(tmp_path):
-    """Workspace that uses the real ffmpeg from PATH; skips if it isn't installed."""
+    """Workspace that uses the real ffmpeg from PATH; skips if it isn't installed
+    (fails instead when CRITTERVID_REQUIRE_FFMPEG is set, as on CI)."""
     if not shutil.which('ffmpeg'):
+        if os.environ.get('CRITTERVID_REQUIRE_FFMPEG'):
+            pytest.fail('ffmpeg not found on PATH (required by CRITTERVID_REQUIRE_FFMPEG)')
         pytest.skip('ffmpeg not found on PATH')
     return make_workspace(tmp_path)
