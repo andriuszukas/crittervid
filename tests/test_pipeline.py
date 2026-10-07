@@ -114,3 +114,16 @@ def test_process_all_output_is_in_order_when_piped(ws):
             < index('=== Step 2') < index('Merged 1 files')
             < index('=== Step 3') < index('Validating converted')
             < index('=== Summary'))
+
+
+def test_process_all_summary_uses_output_dir(ws):
+    # Summary paths must follow --output-dir; dry-run avoids FFmpeg and still prints them.
+    result = ws.run(
+        'process_all.py', '--output-dir', 'custom_out', '--dry-run', '--no-validate'
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Conversion summary: custom_out/conversion_summary.txt' in result.stdout
+    assert 'Merging summary: custom_out/merged/merge_summary.txt' in result.stdout
+    assert 'output/conversion_summary.txt' not in result.stdout
+    assert 'output/merged/merge_summary.txt' not in result.stdout

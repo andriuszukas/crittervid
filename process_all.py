@@ -101,8 +101,10 @@ def main():
         rc3 = 0
 
     print("=== Summary ===")
-    print("Conversion summary: output/conversion_summary.txt")
-    print("Merging summary: output/merged/merge_summary.txt")
+    # These reports are written under the chosen output directory, not a hardcoded "output/".
+    output_dir = args.output_dir or 'output'
+    print(f"Conversion summary: {os.path.join(output_dir, 'conversion_summary.txt')}")
+    print(f"Merging summary: {os.path.join(output_dir, 'merged', 'merge_summary.txt')}")
     if args.validate:
         print("Validation: see console output above")
     else:
