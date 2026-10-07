@@ -1,4 +1,7 @@
 """Pipeline behaviour, using the fake ffmpeg from fake_ffmpeg.py."""
+import os
+
+import pytest
 
 
 # --- Conversion: failed output must never look finished ---
@@ -80,6 +83,29 @@ def test_validate_fails_on_unplayable_output(ws):
 
 
 # --- Full pipeline ---
+
+@pytest.mark.parametrize(('args', 'expected_summaries'), [
+    ((), [
+        'Conversion summary: output/conversion_summary.txt',
+        'Merging summary: output/merged/merge_summary.txt',
+    ]),
+    (('--output-dir', 'reports'), [
+        'Conversion summary: reports/conversion_summary.txt',
+        'Merging summary: reports/merged/merge_summary.txt',
+    ]),
+    (('--output-dir', 'reports with spaces'), [
+        'Conversion summary: reports with spaces/conversion_summary.txt',
+        'Merging summary: reports with spaces/merged/merge_summary.txt',
+    ]),
+], ids=['default', 'relative', 'spaces'])
+def test_process_all_dry_run_summary_paths(ws, args, expected_summaries):
+    result = ws.run('process_all.py', '--dry-run', *args)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    summaries = [line for line in result.stdout.splitlines()
+                 if line.startswith(('Conversion summary:', 'Merging summary:'))]
+    assert summaries == [line.replace('/', os.sep) for line in expected_summaries]
+
 
 def test_process_all_succeeds(ws):
     ws.add_media('0001.media', b'good')

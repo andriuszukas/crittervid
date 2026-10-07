@@ -101,8 +101,8 @@ def main():
         rc3 = 0
 
     print("=== Summary ===")
-    print("Conversion summary: output/conversion_summary.txt")
-    print("Merging summary: output/merged/merge_summary.txt")
+    print(f"Conversion summary: {os.path.join(args.output_dir, 'conversion_summary.txt')}")
+    print(f"Merging summary: {os.path.join(args.output_dir, 'merged', 'merge_summary.txt')}")
     if args.validate:
         print("Validation: see console output above")
     else:
