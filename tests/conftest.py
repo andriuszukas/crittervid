@@ -10,7 +10,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = Path(__file__).resolve().parent
-SCRIPTS = ['ffmpeg_helper.py', 'convert_media.py', 'merge_videos.py', 'validate_output.py', 'process_all.py',
+SCRIPTS = ['ffmpeg_helper.py', 'media_format.py', 'convert_media.py', 'merge_videos.py', 'validate_output.py', 'process_all.py',
            'app.py']
 
 # Matches the camera layout: DCIM/YYYY/MM/DD/<unixtimestamp>_<groupid>/
