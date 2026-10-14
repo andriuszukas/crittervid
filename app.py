@@ -45,11 +45,11 @@ with st.expander("📖 Help & Instructions"):
     ### Quick Start
     1. Select your **Input directory** containing `.media` files (typically from `DCIM` folder on camera)
     2. Select your **Output directory** where `.mp4` files will be saved
-    3. Choose hardware acceleration (Auto recommended)
+    3. Choose hardware acceleration (choosing your GPU explicitly is recommended)
     4. Click **Run** and wait for processing to complete
 
     ### Hardware Acceleration
-    - **Auto** - Automatically detects your GPU (recommended)
+    - **Auto** - Automatically detects your GPU (choosing your GPU explicitly is recommended)
     - **NVIDIA** - Best for NVIDIA graphics cards
     - **Intel** - For Intel integrated graphics
     - **AMD** - For AMD graphics cards
@@ -61,12 +61,12 @@ with st.expander("📖 Help & Instructions"):
     - **Validate output** - Recommended to ensure files are playable
 
     ### Requirements
-    - FFmpeg must be installed (included with standalone executable)
+    - FFmpeg must be installed (may need installing unless the build bundled it)
     - Sufficient disk space (output files are similar size to input)
     - GPU drivers installed for hardware acceleration
 
     ### Troubleshooting
-    - **Slow processing?** Enable GPU acceleration or reduce parallel workers
+    - **Slow processing?** Choose your GPU explicitly under Hardware Acceleration instead of CPU or Auto, or reduce parallel workers
     - **Out of memory?** Reduce number of parallel workers
     - **FFmpeg not found?** Ensure FFmpeg is in your PATH or in the application folder
     """)

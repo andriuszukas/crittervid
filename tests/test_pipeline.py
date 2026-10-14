@@ -200,3 +200,12 @@ def test_process_all_output_is_in_order_when_piped(ws):
             < index('=== Step 2') < index('Merged 1 files')
             < index('=== Step 3') < index('Validating converted')
             < index('=== Summary'))
+
+
+def test_app_help_text_matches_deployment_docs():
+    from pathlib import Path
+    app_text = Path("app.py").read_text(encoding="utf-8")
+    assert "Auto recommended" not in app_text
+    assert "Auto** - Automatically detects your GPU (recommended)" not in app_text
+    assert "included with standalone executable" not in app_text
+    assert "unless the build bundled it" in app_text
