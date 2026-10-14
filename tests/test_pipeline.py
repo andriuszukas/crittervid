@@ -85,6 +85,20 @@ def test_merge_succeeds(ws):
     assert ws.files('*.part') == []
 
 
+def test_merge_skips_old_segment_files_of_events_converted_whole(ws):
+    # Older versions wrote one file per segment into an <event>/ folder; this one
+    # writes <event>.mp4. Both may exist after an upgrade: merge only the event file
+    event_dir = ws.converted('0001.media').parent
+    event_dir.mkdir(parents=True)
+    ws.converted('0001.media').write_bytes(b'OKold')
+    (event_dir.parent / f'{event_dir.name}.mp4').write_bytes(b'OKnew')
+
+    assert ws.run('merge_videos.py').returncode == 0
+
+    [merged] = ws.files('merged_*.mp4')
+    assert merged.read_bytes() == b'OKOKnew'
+
+
 def test_failed_merge_leaves_no_output(ws):
     ws.add_media('0001.media', b'good')
     assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0

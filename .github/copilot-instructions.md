@@ -7,8 +7,9 @@ CritterVid converts segmented `.media` files from wildlife trail cameras into `.
 - The layout matches Tuya's documented IPC storage format: the folder timestamp is the event start (UTC) and `NNNN` is the event length in seconds; each `.media` file name is its offset in seconds into the event. The code currently calls `NNNN` a "group ID" (see issue #30).
 
 ## Pipeline
-- `convert_media.py` — `.media` → `.mp4` with FFmpeg in a thread pool; optional hardware encoding (`--accel`) or stream copy (`--copy`).
-- `merge_videos.py` — groups converted clips by day and joins them with FFmpeg's concat demuxer into `--splits-per-day` files.
+- `media_format.py` — the cameras' `.media` record format (24-byte headers with microsecond timestamps; H.264 video, 8 kHz PCM audio): reading records, aligning audio, and writing the video as MPEG-TS so every frame keeps its timestamp. See `docs/decisions/0001-media-format.md`.
+- `convert_media.py` — converts each event folder into one `<timestamp>_<duration>.mp4`: video copied with camera timestamps, audio as AAC, length checked against the folder name. Files not in the record format fall back to per-segment FFmpeg conversion (`--accel`, `--copy`).
+- `merge_videos.py` — groups converted files by day and joins them with FFmpeg's concat demuxer (`inpoint 0` per file, audio re-encoded once) into `--splits-per-day` files.
 - `validate_output.py` — decodes every output to check it plays.
 - `process_all.py` — runs the three stages in order; `app.py` is the GUI that runs `process_all.py`.
 - `ffmpeg_helper.py` — finds FFmpeg (project folder, then `PATH`).

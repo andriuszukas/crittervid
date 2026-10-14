@@ -20,6 +20,7 @@ datas += collect_data_files('streamlit')
 datas += [
     ('app.py', '.'),
     ('ffmpeg_helper.py', '.'),
+    ('media_format.py', '.'),
     ('convert_media.py', '.'),
     ('merge_videos.py', '.'),
     ('validate_output.py', '.'),

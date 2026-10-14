@@ -72,6 +72,28 @@ Details in #72.
 4. **The camera's time zone is an input, not an assumption.** Folder dates follow the camera's local time and event names follow UTC, so the deployment's time zone must be entered by the user (#36). Events from before the clock was set are detected and kept apart (#73).
 5. **Test with the real record format** (#74). Generated `.media` test fixtures should use records with variable timestamps and audio, so the tests catch the problems found here.
 
+## Implementation (#71)
+
+Measured on real footage while building the converter:
+
+- **Per-frame timestamps, not an average frame rate.**
+  - A constant frame rate per segment would put frames within about 40 ms of their true time in typical segments, but up to 243 ms off in rare ones.
+  - FFmpeg can't attach timestamps to raw H.264, so `media_format.py` writes the frames into a minimal MPEG-TS stream, where each frame carries its own timestamp. FFmpeg then copies them into MP4.
+  - On a real segment, all 198 frames came out within 0.011 ms of the camera's timestamps.
+- **One MP4 per event, not per segment.**
+  - FFmpeg gives the last frame of every file an estimated duration, so joining a 10-minute event from per-segment files added about 50 ms per join: 604.1 s instead of 602.
+  - Converting all of an event's segments into one file avoids this. The real 10-minute event comes out at 601.97 s of video and 602.04 s of audio, against a camera timeline of 601.88 s plus the last frame.
+- **Audio aligned in the data.**
+  - The camera's audio starts a little after its video: typically 39 ms, up to 329 ms.
+  - Container offsets (`-itsoffset`) were lost when muxing, so the PCM is padded or trimmed to start exactly at the first video frame.
+  - Dropouts longer than 60 ms (seen occasionally) are filled with silence, so later audio stays in sync.
+- **Merging.**
+  - Each file's AAC track has encoder padding before time zero, which the concat demuxer turned into a 128 ms video delay at every join.
+  - Each file is now joined from its own time zero (`inpoint 0`), and the audio is re-encoded once while the video is copied.
+  - A real day of 9 events merges to 130.81 s, against 130.79 s for the events alone.
+- **Events named `<start>_0000`.** About 3% of real events have a duration of 0 in their name but contain footage (7–22 s in the examples checked). The camera evidently didn't record the length, for example because the event was cut short. The duration check treats 0 as unknown.
+- **Files not in the record format** are still converted by FFmpeg directly, one segment at a time.
+
 ## Consequences
 
 - Existing outputs made with earlier versions play at the wrong speed and have no sound. They should be regenerated once #71 lands.

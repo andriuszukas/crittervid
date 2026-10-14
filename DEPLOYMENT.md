@@ -98,6 +98,8 @@ Tell users whether FFmpeg is bundled, and that they need Python on `PATH` (see [
 
 ## GPU acceleration
 
+`.media` files in the cameras' usual record format are converted **without re-encoding the video**, so the GPU setting makes no difference for them. It applies to other `.media` files, which FFmpeg has to re-encode.
+
 In the GUI, choose under **Hardware Acceleration**; on the command line, use `--accel`:
 
 | GUI | Command line | Hardware |

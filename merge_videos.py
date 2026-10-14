@@ -15,7 +15,9 @@ SEGMENT_DURATION_HOURS = 12
 SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
 
 # Regex to extract timestamp and group ID from filename
-FILENAME_RE = re.compile(r'(\d{10,})_(\d{4})_\d+\.mp4$')
+# Converted files: one per event (<timestamp>_<duration>.mp4) for the cameras'
+# record format, or one per segment (<timestamp>_<duration>_<offset>.mp4)
+FILENAME_RE = re.compile(r'(?:^|[\\/])(\d{10,})_(\d{4})(?:_\d+)?\.mp4$')
 
 def find_mp4_files(root):
     for dirpath, _, filenames in os.walk(root):
@@ -25,10 +27,13 @@ def find_mp4_files(root):
 
 # Group files by day
 def group_files_by_day(files):
+    # An event converted as one file (<event>.mp4) supersedes per-segment files left
+    # in its <event>/ folder by older versions; merging both would repeat footage
+    events = {f.stem for f in files if FILENAME_RE.search(str(f)) and f.stem.count('_') == 1}
     groups = {}
     for f in files:
         m = FILENAME_RE.search(str(f))
-        if not m:
+        if not m or f.parent.name in events:
             continue
         timestamp = m.group(1)
         dt = datetime.fromtimestamp(int(timestamp))
@@ -61,8 +66,12 @@ def merge_group(period_start, files, summary, split_idx=None, total_splits=None)
     with open(filelist_path, 'w', encoding='utf-8') as f:
         for _, file in files:
             escaped = str(file.resolve()).replace("'", "'\\''")
-            f.write(f"file '{escaped}'\n")
-    cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', str(filelist_path), '-c', 'copy', '-f', 'mp4', str(tmp_path)]
+            # inpoint 0: start each file at its own time zero. Without it, the AAC
+            # encoder's start padding (before zero) delays the video at each join
+            f.write(f"file '{escaped}'\ninpoint 0\n")
+    # Copy the video; re-encode the audio once, so the small padding at the start
+    # of each segment's AAC track doesn't add up into drift over a long merge
+    cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', str(filelist_path), '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', str(tmp_path)]
     result = subprocess.run(cmd, capture_output=True)
     filelist_path.unlink()
     if result.returncode != 0:
