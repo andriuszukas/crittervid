@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 import argparse
 import sys
+import re
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import platform
@@ -66,45 +67,78 @@ def find_media_files(root):
             if filename.endswith('.media'):
                 yield Path(dirpath) / filename
 
-def read_event(segments):
-    """The video frames and audio records of an event's .media segments, in order.
+EVENT_FOLDER = re.compile(r'\d{10,}_\d{4}')
 
-    Raises media_format.MediaFormatError if any segment isn't in the record format.
-    Video frames that don't move forward in time (a rare camera glitch) are
-    dropped, since every frame needs a later timestamp than the one before."""
-    video, audio = [], []
+
+def read_event(segments):
+    """The video frames and audio records of an event's .media segments, in order,
+    plus warnings about anything that had to be skipped.
+
+    Damaged segments don't stop the event: empty files are skipped, an incomplete
+    final record (as left by power loss) is ignored, and segments that aren't in
+    the record format are skipped. Raises media_format.MediaFormatError only if no
+    segment is in the record format. Video frames that don't move forward in time
+    (repeated or garbage records) are dropped, since every frame needs a later
+    timestamp than the one before; audio_pcm handles the audio equivalent."""
+    video, audio, notes, usable, dropped = [], [], [], 0, 0
     for segment in sorted(segments, key=lambda p: p.name):
-        seg_video, seg_audio = media_format.split_streams(segment.read_bytes())
-        video += [frame for frame in seg_video if not video or frame[0] > video[-1][0]]
-        audio += seg_audio
-    return video, audio
+        data = segment.read_bytes()
+        if not data:
+            notes.append(f'{segment.name} is empty and was skipped')
+            continue
+        try:
+            streams = media_format.split_streams(data)
+        except media_format.MediaFormatError:
+            notes.append(f"{segment.name} isn't in the cameras' record format and was skipped")
+            continue
+        usable += 1
+        if streams.trailing_bytes:
+            notes.append(f'{segment.name} ends with {streams.trailing_bytes} bytes of an '
+                         f'incomplete record, which were ignored')
+        for frame in streams.video:
+            if not video or frame[0] > video[-1][0]:
+                video.append(frame)
+            else:
+                dropped += 1
+        audio += streams.audio
+    if not usable:
+        raise media_format.MediaFormatError('no segment is in the record format')
+    if dropped:
+        notes.append(f"{dropped} video frames that didn't move forward in time were dropped")
+    return video, audio, notes
 
 
 def record_format_command(video, audio, out_path, workdir):
     """FFmpeg command that writes video frames and audio records into an MP4
     without re-encoding the video.
 
-    Each frame keeps the timestamp the camera recorded, and the audio, aligned to
-    the first frame, is encoded as AAC."""
+    Each frame keeps the timestamp the camera recorded. The audio, placed by its
+    own timestamps from the first frame to the end of the last one, is encoded as
+    AAC; with no audio recorded it's silence, so every event file has audio."""
     video_path = workdir / 'video.ts'
     video_path.write_bytes(media_format.video_ts(video))
-    cmd = [FFMPEG_PATH, '-y', '-i', str(video_path)]
-    if audio:
-        audio_path = workdir / 'audio.pcm'
-        # The audio is aligned to the first video frame in the data itself
-        audio_path.write_bytes(media_format.audio_pcm(audio, start_us=video[0][0]))
-        cmd += ['-f', 's16le', '-ar', str(media_format.AUDIO_SAMPLE_RATE),
-                '-i', str(audio_path), '-map', '0:v', '-map', '1:a', '-c:a', 'aac']
-    return cmd + ['-c:v', 'copy', '-f', 'mp4', str(out_path)]
+    last_frame = video[-1][0] - video[-2][0] if len(video) > 1 else 66_667
+    audio_path = workdir / 'audio.pcm'
+    audio_path.write_bytes(media_format.audio_pcm(audio, video[0][0], video[-1][0] + last_frame))
+    # FFmpeg treats jumps of more than 10 s in MPEG-TS timestamps as errors and
+    # closes them up; a raised threshold keeps real pauses in the recording
+    return [FFMPEG_PATH, '-y', '-dts_delta_threshold', '1000000', '-i', str(video_path),
+            '-f', 's16le', '-ar', str(media_format.AUDIO_SAMPLE_RATE), '-i', str(audio_path),
+            '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', str(out_path)]
+
+
+def report(summary, msg):
+    print(msg)
+    summary.append(msg)
 
 
 def convert_event(event_dir, segments, summary, failed_files):
     """Convert an event folder's .media segments into one MP4 for the whole event.
 
-    Returns True or False for success, or None if the segments aren't in the
-    cameras' record format (the caller then converts them one by one). One file
-    per event keeps the camera's timeline exact; joining per-segment files would
-    add an estimated frame duration at every join."""
+    Returns True or False for success, or None if no segment is in the cameras'
+    record format (the caller then converts them one by one). One file per event
+    keeps the camera's timeline exact; joining per-segment files would add an
+    estimated frame duration at every join."""
     folder = event_dir.name   # <unix timestamp>_<duration in seconds>
     yyyy, mm, dd = event_dir.parts[-4:-1]
     out_dir = OUTPUT_ROOT / yyyy / mm / dd
@@ -112,12 +146,10 @@ def convert_event(event_dir, segments, summary, failed_files):
     tmp_path = out_dir / f'{folder}.mp4.part'
     try:
         if out_path.exists():
-            msg = f"SKIPPED: {event_dir} -> {out_path} (already exists)"
-            print(msg)
-            summary.append(msg)
+            report(summary, f"SKIPPED: {event_dir} -> {out_path} (already exists)")
             return True
         try:
-            video, audio = read_event(segments)
+            video, audio, notes = read_event(segments)
         except media_format.MediaFormatError:
             return None
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -126,35 +158,35 @@ def convert_event(event_dir, segments, summary, failed_files):
             result = subprocess.run(cmd, capture_output=True)
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
-            msg = f"ERROR: Failed to convert {event_dir}: {result.stderr.decode('utf-8', errors='replace')}"
-            print(msg)
-            summary.append(msg)
+            report(summary, f"ERROR: Failed to convert {event_dir}: {result.stderr.decode('utf-8', errors='replace')}")
             failed_files.append(str(event_dir))
             return False
         tmp_path.replace(out_path)
-        msg = (f"SUCCESS: Converted {event_dir} ({len(segments)} segments) -> {out_path} "
-               f"[video copied with camera timestamps, audio AAC]")
-        print(msg)
-        summary.append(msg)
+        sound = 'audio AAC' if audio else 'silent audio (none recorded)'
+        report(summary, f"SUCCESS: Converted {event_dir} ({len(segments)} segments) -> {out_path} "
+                        f"[video copied with camera timestamps, {sound}]")
+        for note in notes:
+            report(summary, f"WARNING: {event_dir}: {note}")
         # The folder name gives the event's length; footage that doesn't match it
         # points to missing segments or a timing problem worth a look. A length of
         # 0 means the camera didn't record one (e.g. the event was cut short).
         span = (video[-1][0] - video[0][0]) / 1e6
         _, _, expected = folder.partition('_')
-        if expected.isdigit() and int(expected) > 0 and abs(span - int(expected)) > max(2, int(expected) * 0.02):
-            msg = (f"WARNING: {event_dir}: the footage spans {span:.1f} s, "
-                   f"but the folder name says {int(expected)} s")
-            print(msg)
-            summary.append(msg)
+        if int(expected) > 0 and abs(span - int(expected)) > max(2, int(expected) * 0.02):
+            report(summary, f"WARNING: {event_dir}: the footage spans {span:.1f} s, "
+                            f"but the folder name says {int(expected)} s")
         return True
     except Exception as e:
         if tmp_path.exists():
             tmp_path.unlink(missing_ok=True)
-        msg = f"ERROR: Error processing {event_dir}: {e}"
-        print(msg)
-        summary.append(msg)
+        report(summary, f"ERROR: Error processing {event_dir}: {e}")
         failed_files.append(str(event_dir))
         return False
+
+
+# Per-segment output uses the same video time base as per-event files (90 kHz), so
+# the two kinds can be joined in one merged day without the video being squashed
+FALLBACK_OUTPUT = ['-video_track_timescale', '90000', '-f', 'mp4']
 
 
 # Convert .media to .mp4, preserving timestamp and group ID
@@ -179,11 +211,11 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
             return True
         # Files that aren't in the cameras' record format: let FFmpeg read them directly
         if copy_mode:
-            cmd = [FFMPEG_PATH, '-y', '-i', str(media_path), '-c:v', 'copy', '-f', 'mp4', str(tmp_path)]
+            cmd = [FFMPEG_PATH, '-y', '-i', str(media_path), '-c:v', 'copy'] + FALLBACK_OUTPUT + [str(tmp_path)]
             method = 'copy'
         else:
             input_opts, output_opts = ACCEL_OPTIONS[accel]
-            cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', str(media_path)] + output_opts + ['-f', 'mp4', str(tmp_path)]
+            cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', str(media_path)] + output_opts + FALLBACK_OUTPUT + [str(tmp_path)]
             method = accel
         result = subprocess.run(cmd, capture_output=True)
         if result.returncode != 0:
@@ -210,15 +242,13 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
         return False
 
 def group_by_event(paths):
-    """Group .media files and event folders (from --retry-failed) into
-    {event folder: [segments]}."""
-    events = {}
-    for path in paths:
-        if path.is_dir():
-            events.setdefault(path, []).extend(sorted(path.glob('*.media')))
-        else:
-            events.setdefault(path.parent, []).append(path)
-    return events
+    """Group .media files and event folders into {event folder: [segments]}.
+
+    A file stands for its whole event folder: an event is converted as one file,
+    so it needs all its segments (e.g. when --retry-failed lists single files
+    written by older versions)."""
+    folders = {path if path.is_dir() else path.parent for path in paths}
+    return {folder: sorted(folder.glob('*.media')) for folder in sorted(folders)}
 
 
 def convert_event_parallel(args):
@@ -226,6 +256,11 @@ def convert_event_parallel(args):
     # Use a local summary and failed list for thread safety
     local_summary = []
     local_failed = []
+    if not EVENT_FOLDER.fullmatch(event_dir.name):
+        report(local_summary, f"ERROR: {event_dir} isn't an event folder: expected a name like "
+                              f"1736453774_0021 (<start time>_<length in seconds>)")
+        local_failed.append(str(event_dir))
+        return local_summary, local_failed, False
     success = convert_event(event_dir, segments, local_summary, local_failed)
     if success is None:
         # Not in the record format: convert the segments one by one

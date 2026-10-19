@@ -92,7 +92,28 @@ Measured on real footage while building the converter:
   - Each file is now joined from its own time zero (`inpoint 0`), and the audio is re-encoded once while the video is copied.
   - A real day of 9 events merges to 130.81 s, against 130.79 s for the events alone.
 - **Events named `<start>_0000`.** About 3% of real events have a duration of 0 in their name but contain footage (7–22 s in the examples checked). The camera evidently didn't record the length, for example because the event was cut short. The duration check treats 0 as unknown.
-- **Files not in the record format** are still converted by FFmpeg directly, one segment at a time.
+- **Files not in the record format** are still converted by FFmpeg directly, one segment at a time, but only when no segment of the event is in the record format.
+
+### After review: what real cards add
+
+Reviewing the first version against the whole card found three problems the generated test data didn't have:
+
+- **Bursts of silent audio records.**
+  - About 23% of events contain runs of zero-filled audio records 20 ms apart instead of 40 ms. The camera writes silence at twice the data rate where it lost sound.
+  - Appending records in file order made the audio run long: up to 26.5 s late by the end of a 10-minute event.
+  - Audio is now **placed by its timestamps**. Records within 20 ms of where the previous audio ended are appended as is, which absorbs the cameras' timestamp jitter of up to ~16 ms while their samples run on. Later records leave silence before them. Overlapping records only add the part beyond what's already placed, though real sound replaces silence. The audio is cut or padded to end with the video.
+  - The worst event now has 602.78 s of audio for 602.82 s of video.
+- **Pauses longer than 10 s.**
+  - About 11 events have recording pauses of 11–31 s.
+  - FFmpeg treats MPEG-TS timestamp jumps over 10 s as errors and closes them up. That shortened the video but not the audio.
+  - The threshold is raised (`-dts_delta_threshold`), so pauses are kept.
+  - One event starts with a single damaged keyframe 31 s before the rest. FFmpeg places that one frame 0.27 s late; every later frame is exact.
+- **Damaged segments.**
+  - A few events end in a segment cut off by power loss, or an empty file. Some have tails of garbage records with timestamp 0, or segments that start by repeating earlier frames.
+  - Empty segments are skipped, incomplete final records ignored, and frames that don't move forward in time dropped, all with a warning.
+  - An event falls back to per-segment FFmpeg conversion only if none of its segments is in the record format.
+
+Every event file now has an audio track, silent if none was recorded, so a merged day keeps its sound even when its first event has none. Per-segment fallback files use the same 90 kHz video time base as event files, so the two can be merged together.
 
 ## Consequences
 

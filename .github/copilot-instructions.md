@@ -8,7 +8,7 @@ CritterVid converts segmented `.media` files from wildlife trail cameras into `.
 
 ## Pipeline
 - `media_format.py` — the cameras' `.media` record format (24-byte headers with microsecond timestamps; H.264 video, 8 kHz PCM audio): reading records, aligning audio, and writing the video as MPEG-TS so every frame keeps its timestamp. See `docs/decisions/0001-media-format.md`.
-- `convert_media.py` — converts each event folder into one `<timestamp>_<duration>.mp4`: video copied with camera timestamps, audio as AAC, length checked against the folder name. Files not in the record format fall back to per-segment FFmpeg conversion (`--accel`, `--copy`).
+- `convert_media.py` — converts each event folder into one `<timestamp>_<duration>.mp4`: video copied with camera timestamps (pauses kept), audio placed by its timestamps and encoded as AAC (silent if none), damaged segments skipped or trimmed with warnings, length checked against the folder name. Event folders with no record-format file fall back to per-segment FFmpeg conversion (`--accel`, `--copy`).
 - `merge_videos.py` — groups converted files by day and joins them with FFmpeg's concat demuxer (`inpoint 0` per file, audio re-encoded once) into `--splits-per-day` files.
 - `validate_output.py` — decodes every output to check it plays.
 - `process_all.py` — runs the three stages in order; `app.py` is the GUI that runs `process_all.py`.

@@ -10,6 +10,7 @@ See docs/decisions/0001-media-format.md.
 FFmpeg reads the H.264 as a raw stream and ignores these timestamps, so the video
 is wrapped in MPEG-TS here, where every frame carries its own timestamp.
 """
+import collections
 import struct
 
 HEADER = struct.Struct('<IIIIQ')
@@ -17,27 +18,36 @@ VIDEO_FRAME, VIDEO_KEYFRAME, AUDIO = 0, 1, 3
 
 AUDIO_SAMPLE_RATE = 8000
 AUDIO_BYTES_PER_SECOND = AUDIO_SAMPLE_RATE * 2   # 16-bit mono
-AUDIO_RECORD_US = 40_000
-# Fill gaps in the audio longer than this with silence, so later audio stays in
-# sync; shorter differences are timing jitter that evens out
-AUDIO_GAP_FILL_US = 60_000
+# Audio records whose timestamp is within this of where the previous audio ended
+# are treated as continuous: the cameras' audio timestamps jitter by up to ~16 ms
+# while the samples themselves run on without a break
+AUDIO_JITTER_US = 20_000
 
 
 class MediaFormatError(ValueError):
     """The data isn't a .media record stream."""
 
 
-def read_records(data):
+Streams = collections.namedtuple('Streams', 'video audio trailing_bytes')
+
+
+def read_records(data, allow_truncated=False):
     """Yield (type, payload_length, timestamp_us, payload) for each record.
 
-    Raises MediaFormatError unless the data consists exactly of whole records."""
+    Raises MediaFormatError unless the data consists of whole records; with
+    allow_truncated, an incomplete final record (as left by power loss) is
+    ignored instead."""
     pos = 0
     while pos < len(data):
         if pos + HEADER.size > len(data):
+            if allow_truncated:
+                return
             raise MediaFormatError(f'{len(data) - pos} trailing bytes at offset {pos}')
         rtype, length, _ms, _zero, t_us = HEADER.unpack_from(data, pos)
         start = pos + HEADER.size
         if start + length > len(data):
+            if allow_truncated:
+                return
             raise MediaFormatError(f'record at offset {pos} runs past the end of the data')
         yield rtype, length, t_us, data[start:start + length]
         pos = start + length
@@ -45,43 +55,67 @@ def read_records(data):
 
 def split_streams(data):
     """The video frames [(timestamp_us, payload, is_keyframe)] and audio records
-    [(timestamp_us, payload)] of a .media file, in file order."""
-    if not data:
-        raise MediaFormatError('empty file')
-    video, audio = [], []
-    for rtype, _, t_us, payload in read_records(data):
+    [(timestamp_us, payload)] of a .media file, in file order, plus the number of
+    bytes of an incomplete final record that were ignored.
+
+    Raises MediaFormatError if there's no complete record or no video record."""
+    video, audio, used = [], [], 0
+    for rtype, length, t_us, payload in read_records(data, allow_truncated=True):
+        used += HEADER.size + length
         if rtype in (VIDEO_FRAME, VIDEO_KEYFRAME):
             video.append((t_us, payload, rtype == VIDEO_KEYFRAME))
         elif rtype == AUDIO:
             audio.append((t_us, payload))
+    if not used:
+        raise MediaFormatError('no complete record')
     if not video:
         raise MediaFormatError('no video records')
-    return video, audio
+    return Streams(video, audio, len(data) - used)
 
 
-def audio_pcm(audio, start_us):
-    """The audio as one continuous PCM stream that starts at start_us (the first
-    video frame), so it lines up with the video without relying on container
-    offsets. Silence is added before audio that starts later, audio from before
-    start_us is dropped, and gaps longer than AUDIO_GAP_FILL_US are filled with
-    silence."""
-    out = []
-    lead = (audio[0][0] - start_us) * AUDIO_BYTES_PER_SECOND // 1_000_000 if audio else 0
-    if lead > 0:
-        out.append(b'\x00' * (lead - lead % 2))
-    expected = None
+def _audio_offset(t_us, start_us):
+    """Byte position in the PCM stream for a time, rounded down to a whole sample."""
+    pos = (t_us - start_us) * AUDIO_BYTES_PER_SECOND // 1_000_000
+    return pos - pos % 2
+
+
+def audio_pcm(audio, start_us, end_us):
+    """The audio as one PCM stream covering exactly start_us (the first video
+    frame) to end_us, so it lines up with the video by itself.
+
+    Each record goes where its timestamp says. Small differences (jitter) are
+    absorbed by appending as is; later records leave silence before them; records
+    that overlap audio already placed (the cameras' bursts of silent records 20 ms
+    apart, duplicates, out-of-order records) only add their part beyond it, except
+    that real sound replaces silence. Audio outside start_us..end_us is dropped,
+    and missing audio is silence."""
+    total = _audio_offset(end_us, start_us)
+    pcm = bytearray()
+    jitter = _audio_offset(start_us + AUDIO_JITTER_US, start_us)
     for t_us, payload in audio:
-        if expected is not None and t_us - expected > AUDIO_GAP_FILL_US - AUDIO_RECORD_US:
-            silence = (t_us - expected) * AUDIO_BYTES_PER_SECOND // 1_000_000
-            out.append(b'\x00' * (silence - silence % 2))
-        out.append(payload)
-        if expected is None or t_us > expected - AUDIO_RECORD_US:
-            # A record far out of order (rare) doesn't move the expected time back
-            expected = t_us + len(payload) * 1_000_000 // AUDIO_BYTES_PER_SECOND
-    pcm = b''.join(out)
-    if lead < 0:
-        pcm = pcm[-lead - (-lead) % 2:]
-    return pcm
+        payload = payload[:len(payload) - len(payload) % 2]
+        pos = _audio_offset(t_us, start_us)
+        if pos >= total or pos + len(payload) <= 0:
+            continue
+        if pos < 0:
+            payload, pos = payload[-pos:], 0
+        if abs(pos - len(pcm)) <= jitter:
+            pcm += payload          # continuous with what came before
+            continue
+        if pos > len(pcm):
+            pcm += bytes(pos - len(pcm))
+            pcm += payload
+            continue
+        # Overlap: keep audio already placed, but let real sound replace silence
+        overlap_end = min(len(pcm), pos + len(payload))
+        existing = pcm[pos:overlap_end]
+        new = payload[:overlap_end - pos]
+        if not any(existing) and any(new):
+            pcm[pos:overlap_end] = new
+        pcm += payload[overlap_end - pos:]
+    if len(pcm) < total:
+        pcm += bytes(total - len(pcm))
+    return bytes(pcm[:total])
 
 
 # --- MPEG-TS with one H.264 stream -------------------------------------------
@@ -89,6 +123,7 @@ def audio_pcm(audio, start_us):
 TS_PACKET = 188
 PMT_PID, VIDEO_PID = 0x1000, 0x100
 PTS_START = 90_000   # start at 1 s, so the clock reference can sit just before it
+PTS_MASK = (1 << 33) - 1
 
 
 def _crc32_mpeg2(data):
@@ -134,7 +169,7 @@ def _adaptation_field(space, pcr=None, random_access=False):
         return b'\x00'
     body = bytes([(0x40 if random_access else 0) | (0x10 if pcr is not None else 0)])
     if pcr is not None:
-        body += ((pcr << 15) | (0x3F << 9)).to_bytes(6, 'big')
+        body += (((pcr & PTS_MASK) << 15) | (0x3F << 9)).to_bytes(6, 'big')
     stuffing = space - 1 - len(body)
     if stuffing < 0:
         raise ValueError('adaptation field does not fit')
@@ -164,15 +199,21 @@ def _pes_packets(pes, pts, keyframe, cc):
 def video_ts(video):
     """An MPEG-TS stream of the video frames, each with its own timestamp.
 
-    Returns the TS bytes; the first frame is at PTS_START (1 s)."""
+    Returns the TS bytes; the first frame is at PTS_START (1 s). Raises
+    MediaFormatError if a frame isn't later than the one before it."""
     t0 = video[0][0]
-    out, cc, table_cc = [], 0, 0
+    out, cc, table_cc, previous = [], 0, 0, None
     for t_us, payload, keyframe in video:
+        if previous is not None and t_us <= previous:
+            raise MediaFormatError(f'video timestamp {t_us} does not follow {previous}')
+        previous = t_us
         if keyframe or not out:
             out.append(_tables(table_cc))
             table_cc = (table_cc + 1) % 16
-        pts = PTS_START + (t_us - t0) * 9 // 100   # microseconds -> 90 kHz
-        pes = b'\x00\x00\x01\xE0\x00\x00\x80\x80\x05' + _pts_bytes(pts) + payload
+        # Microseconds to the 90 kHz clock, which wraps at 33 bits (about 26.5 h)
+        pts = (PTS_START + (t_us - t0) * 9 // 100) & PTS_MASK
+        # PES header: no length (allowed for video), data aligned to the frame, PTS
+        pes = b'\x00\x00\x01\xE0\x00\x00\x84\x80\x05' + _pts_bytes(pts) + payload
         packets, cc = _pes_packets(pes, pts, keyframe, cc)
         out.append(packets)
     return b''.join(out)

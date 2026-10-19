@@ -9,8 +9,10 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
 ## Features
 
 - **Convert** each recorded event's `.media` segments into one `.mp4`, in parallel. The camera's
-  video is copied without re-encoding, every frame keeps the time the camera recorded, and the
-  audio is included. Each event's length is checked against the one in its folder name.
+  video is copied without re-encoding, every frame keeps the time the camera recorded (including
+  pauses in the recording), and the audio is placed by its own timestamps so it stays in sync.
+  Damaged segments (empty files, a cut-off end after power loss) are skipped or trimmed with a
+  warning instead of spoiling the event. Each event's length is checked against its folder name.
 - **Hardware acceleration** — only used for `.media` files that aren't in the cameras' usual
   record format, which FFmpeg has to re-encode: NVIDIA (CUDA), Intel (QSV), AMD (AMF), or CPU.
   Auto-detection can't detect NVIDIA on Python 3.12+ ([#2](https://github.com/andriuszukas/crittervid/issues/2)), so choose your GPU explicitly.
@@ -86,8 +88,10 @@ output/
   merged/merge_summary.txt
 ```
 
-Files that aren't in the cameras' record format are converted one segment at a time instead,
-into `YYYY/MM/DD/<timestamp>_<duration>/` folders.
+Every event file has an audio track; it's silent if the camera recorded no sound. Event
+folders in which no file is in the cameras' record format are converted one segment at a time
+instead, into `YYYY/MM/DD/<timestamp>_<duration>/` folders. An event file isn't redone if more
+segments are added to its folder later; delete it to convert the event again.
 
 > **Upgrading from an earlier version?** Earlier versions converted `.media` files at the wrong
 > speed (about 25% too slow) and without sound
