@@ -28,13 +28,16 @@ AUDIO_RECORD_BYTES = 640            # 40 ms of 8 kHz 16-bit mono
 BURST_RECORD_US = 20_000            # zero-filled records in a burst are this far apart
 
 
-def h264_frames(count, size='320x240'):
+def h264_frames(count, size='320x240', large_frames=False):
     """`count` H.264 frames from FFmpeg's test source, as [(annex_b_bytes, is_keyframe)].
+
+    large_frames adds random noise, so frames are large (as real camera footage
+    is) whatever the encoder build: the clean test pattern compresses very well.
 
     Parameter sets and SEI go into the record of the frame that follows them, as
     the cameras store them with each keyframe."""
     raw = subprocess.run(
-        ['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', f'testsrc=size={size}:rate=15',
+        ['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', f'testsrc=size={size}:rate=15' + (',noise=alls=40:allf=t' if large_frames else ''),
          '-frames:v', str(count), '-c:v', 'libx264', '-preset', 'ultrafast', '-bf', '0', '-g', str(KEYFRAME_EVERY), '-sc_threshold', '0',
          '-f', 'h264', '-'],
         capture_output=True, check=True,
@@ -81,7 +84,7 @@ def marker_audio(t_us, marker_us):
 
 def write_event(dcim, start, seconds, segment_seconds=13, audio_offset_us=38_000, folder_seconds=None,
                 frame_size='320x240', *, audio_bursts=(), gap=None, truncate_last_bytes=0, empty_segment=None,
-                repeat_first_frames=0, garbage_tail=0, no_audio=False, marker_at_s=None):
+                repeat_first_frames=0, garbage_tail=0, no_audio=False, marker_at_s=None, large_frames=False):
     """Write one event folder DCIM/YYYY/MM/DD/<start>_<duration>/<offset>.media.
 
     `start` is an aware datetime; the folder's date is its UTC date. `seconds` is
@@ -108,7 +111,7 @@ def write_event(dcim, start, seconds, segment_seconds=13, audio_offset_us=38_000
         if gap and stamps[-1] < gap_start <= stamp:
             stamp += gap_end - gap_start
         stamps.append(stamp)
-    frames = h264_frames(len(stamps), frame_size)
+    frames = h264_frames(len(stamps), frame_size, large_frames=large_frames)
     duration = seconds if folder_seconds is None else folder_seconds
     folder = Path(dcim) / start.strftime('%Y/%m/%d') / f'{int(start.timestamp())}_{duration:04d}'
     folder.mkdir(parents=True)

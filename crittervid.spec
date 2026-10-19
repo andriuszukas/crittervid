@@ -36,13 +36,19 @@ datas += [
 # clone won't have it; the app then uses FFmpeg from PATH at runtime. Look next
 # to this spec (SPECPATH), which is where PyInstaller resolves the other entries,
 # so the result doesn't depend on the folder the build is started from.
-ffmpeg_name = 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg'
-ffmpeg_path = os.path.join(SPECPATH, ffmpeg_name)
+exe = '.exe' if sys.platform == 'win32' else ''
+ffmpeg_path = os.path.join(SPECPATH, 'ffmpeg' + exe)
 binaries = []
 if os.path.isfile(ffmpeg_path):
     binaries.append((ffmpeg_path, '.'))
+    # ffprobe (shipped with FFmpeg) lets merges end each file exactly where its video ends
+    ffprobe_path = os.path.join(SPECPATH, 'ffprobe' + exe)
+    if os.path.isfile(ffprobe_path):
+        binaries.append((ffprobe_path, '.'))
+    else:
+        print(f'WARNING: ffprobe{exe} not found in {SPECPATH}; merged files may drift slightly.')
 else:
-    print(f'WARNING: {ffmpeg_name} not found in {SPECPATH}; building without it. '
+    print(f'WARNING: ffmpeg{exe} not found in {SPECPATH}; building without it. '
           'Users will need FFmpeg on their PATH.')
 
 a = Analysis(

@@ -231,8 +231,10 @@ def test_day_starting_with_a_silent_event_merges_with_audio(real_ws):
 
 
 def test_large_frames_convert_with_exact_times(real_ws):
-    # A 2304x1296 keyframe is bigger than 64 KB, as on the 4 MP cameras
-    folder, stamps = write_event(real_ws.root / 'input' / 'DCIM', START, 10, frame_size='2304x1296')
+    # Real 2304x1296 keyframes exceed 64 KB (up to ~180 KB); noisy test frames make
+    # sure these do too, whatever the FFmpeg build
+    folder, stamps = write_event(real_ws.root / 'input' / 'DCIM', START, 10, frame_size='2304x1296',
+                                 large_frames=True)
     first = sorted(folder.glob('*.media'))[0].read_bytes()
     assert max(length for rtype, length, _, _ in read_records(first) if rtype == 1) > 65536
 
@@ -241,3 +243,24 @@ def test_large_frames_convert_with_exact_times(real_ws):
     out = only_output(real_ws)
     assert_camera_times(out, stamps)
     assert_audio_matches_video(out, 10)
+
+
+def test_merging_many_events_does_not_drift(real_ws):
+    # A day can hold dozens of events. Each event file's audio and video end a few
+    # milliseconds apart, and if every join added that difference the merged day
+    # would slowly drift; joins must follow the video exactly
+    # 20 s: an event whose AAC audio ends a little after its video
+    write_event(real_ws.root / 'input' / 'DCIM', START, 20)
+    convert(real_ws)
+    [event] = real_ws.root.joinpath('output').rglob('*.mp4')
+    one = float(streams(event)['video']['duration'])
+    copies = 20
+    for i in range(1, copies):   # the same footage as 19 more events that day
+        event.with_name(f'{int(START.timestamp()) + 60 * i}_0020.mp4').write_bytes(event.read_bytes())
+
+    assert real_ws.run('merge_videos.py').returncode == 0
+
+    [merged] = real_ws.root.joinpath('output', 'merged').rglob('merged_*.mp4')
+    s = streams(merged)
+    assert float(s['video']['duration']) == pytest.approx(copies * one, abs=0.02)
+    assert float(s['audio']['duration']) == pytest.approx(float(s['video']['duration']), abs=0.13)

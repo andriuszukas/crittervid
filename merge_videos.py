@@ -6,11 +6,12 @@ from datetime import datetime, timedelta
 import re
 import argparse
 import sys
-from ffmpeg_helper import get_ffmpeg_path
+from ffmpeg_helper import get_ffmpeg_path, get_ffprobe_path
 
 OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
 FFMPEG_PATH = get_ffmpeg_path()  # Auto-detect ffmpeg location
+FFPROBE_PATH = get_ffprobe_path()
 SEGMENT_DURATION_HOURS = 12
 SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
 
@@ -45,6 +46,20 @@ def group_files_by_day(files):
         groups[k].sort()
     return groups
 
+def video_duration(path):
+    """The length of a file's video stream in seconds, or None if ffprobe isn't
+    available or can't read it."""
+    if not FFPROBE_PATH:
+        return None
+    result = subprocess.run([FFPROBE_PATH, '-v', 'error', '-select_streams', 'v:0',
+                             '-show_entries', 'stream=duration', '-of', 'csv=p=0', str(path)],
+                            capture_output=True, text=True, encoding='utf-8', errors='replace')
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
 def merge_group(period_start, files, summary, split_idx=None, total_splits=None):
     out_dir = MERGED_ROOT / period_start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +84,13 @@ def merge_group(period_start, files, summary, split_idx=None, total_splits=None)
             # inpoint 0: start each file at its own time zero. Without it, the AAC
             # encoder's start padding (before zero) delays the video at each join
             f.write(f"file '{escaped}'\ninpoint 0\n")
+            # End each file exactly where its video ends. AAC audio comes in blocks
+            # and the video's last frame has an estimated length, so the two rarely
+            # end together; left to itself, FFmpeg starts the next file after one
+            # or the other depending on the version, which adds up over many files
+            duration = video_duration(file)
+            if duration:
+                f.write(f"outpoint {duration:.6f}\nduration {duration:.6f}\n")
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
     cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', str(filelist_path), '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', str(tmp_path)]
