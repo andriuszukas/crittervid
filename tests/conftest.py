@@ -63,6 +63,8 @@ def make_workspace(tmp_path, path_prefix=None):
     # buffering and encoding bugs the tests are meant to catch
     for var in ('PYTHONUNBUFFERED', 'PYTHONUTF8', 'PYTHONIOENCODING'):
         env.pop(var, None)
+    # Day grouping uses the machine's local time; fix it so tests don't depend on it
+    env['TZ'] = 'UTC0'
     if path_prefix:
         env['PATH'] = str(path_prefix) + os.pathsep + env['PATH']
     return Workspace(app, env)
