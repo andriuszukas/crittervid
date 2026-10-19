@@ -5,6 +5,8 @@ Skipped when Streamlit isn't installed (required on CI).
 The Streamlit GUI is due to be replaced by a PySide6 window (#41); these tests
 keep the current one honest until then.
 """
+from pathlib import Path
+
 import pytest
 
 from conftest import require
@@ -58,3 +60,14 @@ def test_gui_reports_failure(gui, ws):
 
     assert not at.exception
     assert [e.value for e in at.error] == ['❌ Pipeline failed with exit code 1']
+
+
+def test_app_help_text_matches_deployment_docs():
+    app = Path(__file__).resolve().parent.parent / 'app.py'
+    app_text = app.read_text(encoding="utf-8")
+    assert "Auto recommended" not in app_text
+    assert "Auto** - Automatically detects your GPU (recommended)" not in app_text
+    assert "included with standalone executable" not in app_text
+    assert "unless the build bundled it" in app_text
+    assert "can't detect NVIDIA cards" in app_text
+    assert "into the `_internal` folder" in app_text
