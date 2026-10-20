@@ -251,3 +251,20 @@ def test_ts_frames_carry_their_timestamps():
         found.append(decode_pts(payload[9:14]))
     t0 = frames[0][0]
     assert found == [mf.PTS_START + (t - t0) * 9 // 100 for t, _, _ in frames]
+
+
+def test_decoding_starts_at_the_first_keyframe_with_its_parameter_sets():
+    broken_key = b'\x00\x00\x00\x01\x41p'   # marked as a keyframe on the card (#77)
+    bare_idr = b'\x00\x00\x00\x01\x65idr'
+    assert mf.decodable_start([(0, KEY, True), (1, P, False)]) == 0
+    assert mf.decodable_start([(0, broken_key, True), (1, P, False), (2, KEY, True)]) == 2
+    assert mf.decodable_start([(0, bare_idr, True), (1, KEY, True)]) == 1
+    assert mf.decodable_start([(0, broken_key, True), (1, P, False)]) is None
+
+
+def test_a_keyframe_starts_at_its_parameter_sets():
+    leftovers = b'\x00\x00\x00\x01\x41old\x00\x00\x01\x41older'
+    assert mf.from_parameter_sets(leftovers + KEY) == KEY
+    assert mf.from_parameter_sets(KEY) == KEY
+    assert mf.from_parameter_sets(b'\x41old\x00\x00\x01\x67sps') == b'\x00\x00\x01\x67sps'   # 3-byte start code
+    assert mf.from_parameter_sets(P) == P   # nothing to trim without parameter sets

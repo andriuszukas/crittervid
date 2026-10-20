@@ -24,6 +24,11 @@ AUDIO_BYTES_PER_SECOND = AUDIO_SAMPLE_RATE * 2   # 16-bit mono
 AUDIO_JITTER_US = 20_000
 
 
+# H.264 NAL unit types: a slice of an IDR picture (one that needs no earlier frame),
+# and the sequence and picture parameter sets a decoder needs before any slice
+NAL_IDR, NAL_SPS, NAL_PPS = 5, 7, 8
+
+
 class MediaFormatError(ValueError):
     """The data isn't a .media record stream."""
 
@@ -71,6 +76,41 @@ def split_streams(data):
     if not video:
         raise MediaFormatError('no video records')
     return Streams(video, audio, len(data) - used)
+
+
+def nal_types(payload):
+    """The NAL unit types in an Annex B frame."""
+    return {unit[0] & 0x1F for unit in payload.split(b'\x00\x00\x01')[1:] if unit}
+
+
+def decodable_start(video):
+    """The index of the first video frame a decoder can start from (an IDR picture
+    with its parameter sets, as the cameras store each keyframe), or None if
+    there's none.
+
+    A frame without them holds only slices referring to an earlier picture the
+    card doesn't have, so it can't be decoded."""
+    for i, (_, payload, _) in enumerate(video):
+        if {NAL_IDR, NAL_SPS, NAL_PPS} <= nal_types(payload):
+            return i
+    return None
+
+
+def from_parameter_sets(payload):
+    """A keyframe's data from its first SPS on.
+
+    The first keyframe of an event can carry slices of earlier pictures in front
+    of its parameter sets, left over from before the recording started. They
+    can't be decoded, and FFmpeg takes them for frames of their own that share
+    the keyframe's timestamp, which shifts the keyframe and the video's start,
+    more so when a long pause follows (#77)."""
+    pos = 0
+    while (found := payload.find(b'\x00\x00\x01', pos)) >= 0:
+        if found + 3 < len(payload) and payload[found + 3] & 0x1F == NAL_SPS:
+            # Keep a 4-byte start code whole
+            return payload[found - 1 if found and payload[found - 1] == 0 else found:]
+        pos = found + 3
+    return payload
 
 
 def _audio_offset(t_us, start_us):

@@ -19,7 +19,8 @@ def record(rtype, payload, t_us):
 def segment(label, start_us):
     """A small segment in the record format: a keyframe, a frame and some audio.
     The label ends up in the fake's output, since it only copies what it gets."""
-    key = b'\x00\x00\x00\x01\x65' + label
+    # A keyframe holds its parameter sets and an IDR slice, as the cameras store it
+    key = b'\x00\x00\x00\x01\x67sps\x00\x00\x00\x01\x68pps\x00\x00\x00\x01\x65' + label
     frame = b'\x00\x00\x00\x01\x41' + label
     return (record(1, key, start_us) + record(3, bytes(640), start_us + 38_000)
             + record(0, frame, start_us + 50_000))
@@ -136,3 +137,40 @@ def test_per_segment_files_get_the_same_video_time_base_as_event_files(ws, optio
 
     [args] = ws.ffmpeg_calls()
     assert args[args.index('-video_track_timescale') + 1] == '90000'
+
+
+def test_event_with_no_frame_that_can_be_decoded_is_converted_with_a_warning(ws):
+    # A lone frame marked as a keyframe, but holding only a slice that refers to
+    # an earlier picture (#77)
+    ws.add_media('0000.media', record(1, b'\x00\x00\x00\x01\x41lone', 1_000_000))
+
+    result = convert(ws)
+
+    assert result.returncode == 0, result.stdout
+    assert any('WARNING' in line and 'may not play' in line for line in result.stdout.splitlines())
+    assert b'lone' in event_output(ws).read_bytes()   # as it was, not dropped or split into segments
+
+
+def test_frames_before_the_first_keyframe_are_dropped_with_a_warning(ws):
+    ws.add_media('0000.media', record(1, b'\x00\x00\x00\x01\x41broken', 1_000_000) + segment(b'real', 28_000_000))
+
+    result = convert(ws)
+
+    assert result.returncode == 0, result.stdout
+    assert any('WARNING' in line and '1 video frames at the start were dropped' in line
+               for line in result.stdout.splitlines())
+    data = event_output(ws).read_bytes()
+    assert b'real' in data and b'broken' not in data
+
+
+def test_leftover_pictures_in_front_of_the_first_keyframe_are_removed(ws):
+    key = (b'\x00\x00\x00\x01\x41leftover'
+           b'\x00\x00\x00\x01\x67sps\x00\x00\x00\x01\x68pps\x00\x00\x00\x01\x65first')
+    ws.add_media('0000.media', record(1, key, 1_000_000) + segment(b'later', 28_000_000))
+
+    result = convert(ws)
+
+    assert result.returncode == 0, result.stdout
+    assert any('WARNING' in line and 'earlier pictures' in line for line in result.stdout.splitlines())
+    data = event_output(ws).read_bytes()
+    assert b'first' in data and b'later' in data and b'leftover' not in data

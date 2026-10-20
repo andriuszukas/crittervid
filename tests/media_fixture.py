@@ -84,7 +84,8 @@ def marker_audio(t_us, marker_us):
 
 def write_event(dcim, start, seconds, segment_seconds=13, audio_offset_us=38_000, folder_seconds=None,
                 frame_size='320x240', *, audio_bursts=(), gap=None, truncate_last_bytes=0, empty_segment=None,
-                repeat_first_frames=0, garbage_tail=0, no_audio=False, marker_at_s=None, large_frames=False):
+                repeat_first_frames=0, garbage_tail=0, no_audio=False, marker_at_s=None, large_frames=False,
+                leftovers_first_s=None):
     """Write one event folder DCIM/YYYY/MM/DD/<start>_<duration>/<offset>.media.
 
     `start` is an aware datetime; the folder's date is its UTC date. `seconds` is
@@ -101,7 +102,10 @@ def write_event(dcim, start, seconds, segment_seconds=13, audio_offset_us=38_000
       again (and their audio), with their original timestamps
     - garbage_tail=N: N video records with timestamp 0 end the last segment
     - no_audio=True: no audio records at all
-    - marker_at_s: all audio is silent except a loud tone for 200 ms from there"""
+    - marker_at_s: all audio is silent except a loud tone for 200 ms from there
+    - leftovers_first_s=S: the event starts S seconds before the rest of the
+      footage, with no audio in between, with a keyframe that carries slices of an
+      earlier picture in front of its parameter sets, as on real cards (#77)"""
     t0 = int(start.timestamp()) * 1_000_000
     gap_start = t0 + int(gap[0] * 1_000_000) if gap else None
     gap_end = gap_start + int(gap[1] * 1_000_000) if gap else None
@@ -143,6 +147,10 @@ def write_event(dcim, start, seconds, segment_seconds=13, audio_offset_us=38_000
         last = frame_times[repeat_first_frames - 1]
         records[1] = [r for r in records[0] if r[0] <= last] + records[1]
     records[-1] += [(0, 0, bytes(8))] * garbage_tail
+    if leftovers_first_s is not None:
+        first = t0 - int(leftovers_first_s * 1_000_000)
+        records[0].insert(0, (first, 1, frames[1][0] + frames[0][0]))
+        stamps.insert(0, first)
 
     for name, recs in zip(names, records):
         with open(folder / name, 'wb') as f:

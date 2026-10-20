@@ -79,7 +79,9 @@ def read_event(segments):
     the record format are skipped. Raises media_format.MediaFormatError only if no
     segment is in the record format. Video frames that don't move forward in time
     (repeated or garbage records) are dropped, since every frame needs a later
-    timestamp than the one before; audio_pcm handles the audio equivalent."""
+    timestamp than the one before; audio_pcm handles the audio equivalent. Frames
+    before the first keyframe can't be decoded and are dropped too, as is what's
+    left of earlier pictures in front of that keyframe."""
     video, audio, notes, usable, dropped = [], [], [], 0, 0
     for segment in sorted(segments, key=lambda p: p.name):
         data = segment.read_bytes()
@@ -105,6 +107,21 @@ def read_event(segments):
         raise media_format.MediaFormatError('no segment is in the record format')
     if dropped:
         notes.append(f"{dropped} video frames that didn't move forward in time were dropped")
+    # Frames before the first keyframe can't be decoded, so the event starts there,
+    # and without what's left of earlier pictures in front of that keyframe (#77)
+    start = media_format.decodable_start(video)
+    if start is None:   # converted as it is, in case it's something not seen on cards so far
+        notes.append("no video frame is a keyframe with its parameter sets, so the video may not play")
+        return video, audio, notes
+    if start:
+        notes.append(f"{start} video frames at the start were dropped: they can't be decoded "
+                     f"without an earlier keyframe that isn't on the card")
+    t_us, payload, key = video[start]
+    keyframe = media_format.from_parameter_sets(payload)
+    if len(keyframe) < len(payload):
+        notes.append(f"the first keyframe began with {len(payload) - len(keyframe)} bytes of earlier "
+                     f"pictures that can't be decoded; they were removed")
+    video = [(t_us, keyframe, key)] + video[start + 1:]
     return video, audio, notes
 
 

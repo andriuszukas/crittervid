@@ -140,12 +140,13 @@ def check_converted(path, p):
         audio = p.streams['audio'][1]
         # The audio covers the video from its first frame to its end. Usually the
         # video starts at 0, so length and end are the same; when it starts later
-        # (#77), the audio may match either
+        # (in files converted before #77 was fixed), the audio may match either
         if min(abs(audio - video_len), abs(audio - p.end())) > AV_TOLERANCE_S:
             problems.append(f'ERROR: {path}: audio is {audio:.2f} s long but the video '
                             f'is {video_len:.2f} s long (ending at {p.end():.2f} s)')
     if video_start > START_TOLERANCE_S:
-        problems.append(f'WARNING: {path}: video starts at {video_start:.2f} s, not 0')
+        problems.append(f'WARNING: {path}: video starts at {video_start:.2f} s, not 0 '
+                        f'(if an earlier version converted it, delete it and convert it again)')
     return problems
 
 

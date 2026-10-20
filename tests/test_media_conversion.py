@@ -170,6 +170,21 @@ def test_recording_gap_is_kept_in_video_and_audio(real_ws):
     assert_audio_matches_video(out, (stamps[-1] - stamps[0]) / 1e6)
 
 
+def test_first_keyframe_with_leftover_pictures_before_a_long_pause_keeps_its_time(real_ws):
+    # The first keyframe, 27 s before the rest, carries slices of an earlier
+    # picture; FFmpeg took them for extra frames and shifted the keyframe and the
+    # video's start, which cut the start of the event from merged days (#77)
+    folder, stamps = write_event(real_ws.root / 'input' / 'DCIM', START, 20, leftovers_first_s=27)
+
+    result = convert(real_ws)
+
+    out = only_output(real_ws)
+    assert any('earlier pictures' in line and 'removed' in line for line in warnings(result))
+    assert float(streams(out)['video']['start_time']) == pytest.approx(0, abs=0.001)
+    assert_camera_times(out, stamps)
+    assert_audio_matches_video(out, (stamps[-1] - stamps[0]) / 1e6)
+
+
 def test_truncated_last_segment_is_used_up_to_its_last_record(real_ws):
     folder, _ = write_event(real_ws.root / 'input' / 'DCIM', START, 30, truncate_last_bytes=23)
 
