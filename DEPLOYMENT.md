@@ -19,7 +19,7 @@ The packaged app runs on **Windows 10 or newer**.
    - No extra Python packages are needed.
 2. **FFmpeg**, unless the person who built the app bundled it (ask them). If it isn't bundled, either:
    - install FFmpeg and add it to `PATH` (download from https://ffmpeg.org/download.html), or
-   - copy `ffmpeg.exe` into the `CritterVid\_internal\` folder.
+   - copy `ffmpeg.exe` and `ffprobe.exe` (both come with FFmpeg) into the `CritterVid\_internal\` folder.
 
 ### Starting and stopping
 
@@ -81,7 +81,7 @@ python convert_media.py --retry-failed --max-retries 5
 Builds are Windows-only for now; builds for macOS and Linux are planned ([#46](https://github.com/andriuszukas/crittervid/issues/46)).
 
 1. Set up Python 3.10 to 3.13 and install `requirements.txt`, as in [Running from source](#running-from-source).
-2. **Optional:** put `ffmpeg.exe` in the project folder to bundle it, so users don't have to install FFmpeg. Without it, the build still works and prints a note that FFmpeg wasn't bundled.
+2. **Optional:** put `ffmpeg.exe` and `ffprobe.exe` in the project folder to bundle them, so users don't have to install FFmpeg. Without them, the build still works and prints a note that FFmpeg wasn't bundled. ffprobe is used to check outputs and to join files exactly; without it, validation falls back to slow full decoding.
 3. Run `build.bat`.
 4. The app is in `dist\CritterVid\`, with `CritterVid.exe` as the main program. It's about 190–210 MB, plus the size of `ffmpeg.exe` if bundled.
 5. Zip the whole `dist\CritterVid\` folder and share the zip:
@@ -116,7 +116,7 @@ In the GUI, choose under **Hardware Acceleration**; on the command line, use `--
 
 ### "FFmpeg not found", or every conversion fails
 - Install FFmpeg and add it to `PATH`, or
-- for the packaged app, copy `ffmpeg.exe` into `CritterVid\_internal\`, or
+- for the packaged app, copy `ffmpeg.exe` and `ffprobe.exe` into `CritterVid\_internal\`, or
 - when running from source, put it in the project folder.
 
 ### The packaged app reports "Pipeline failed with exit code 9009", or says Python can't be found

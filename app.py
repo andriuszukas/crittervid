@@ -43,7 +43,7 @@ with st.expander("📖 Help & Instructions"):
     This tool processes wildlife camera footage in three steps:
     1. **Convert** - Converts `.media` files to `.mp4` format
     2. **Merge** - Combines videos by date into daily clips
-    3. **Validate** - Checks that output files are playable
+    3. **Validate** - Checks that every output has video and audio of the right length, and that merged days contain all their events
 
     ### Quick Start
     1. Select your **Input directory** containing `.media` files (typically from `DCIM` folder on camera)
@@ -61,7 +61,7 @@ with st.expander("📖 Help & Instructions"):
     ### Settings Explained
     - **Number of videos to process in parallel** - Higher = faster but uses more RAM (4 is a good default)
     - **How many mp4 files to generate per day** - Splits each day's footage into N files (1 = one file per day)
-    - **Validate output** - Recommended to ensure files are playable
+    - **Validate output** - Recommended; takes seconds and catches missing audio, wrong lengths and incomplete merges
 
     ### Requirements
     - FFmpeg must be installed (may need installing unless the build bundled it)
@@ -127,7 +127,7 @@ st.header("Pipeline Parameters")
 accel_display = st.selectbox("Hardware Acceleration", ["Auto", "CPU", "NVIDIA", "Intel", "AMD"], help="Select hardware acceleration method. NVidia GPUs are the best.", index=0)
 workers = st.number_input("Number of videos to process in parallel", min_value=1, max_value=32, value=4, help="Number of videos to process in parallel.")
 splits_per_day = st.number_input("How many mp4 files to generate per day?", min_value=1, max_value=24, value=1, help="Number of videosplits to create per day.")
-validate = st.checkbox("Validate output after processing", help="Validate if the output mp4 files are playable after processing.", value=True)
+validate = st.checkbox("Validate output after processing", help="Check that the outputs have video and audio of the right length and that merged days are complete. Takes seconds.", value=True)
 
 st.header("Run Pipeline")
 if st.button("Run"):
