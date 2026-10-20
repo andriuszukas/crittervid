@@ -10,7 +10,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = Path(__file__).resolve().parent
-SCRIPTS = ['ffmpeg_helper.py', 'convert_media.py', 'merge_videos.py', 'validate_output.py', 'process_all.py',
+SCRIPTS = ['ffmpeg_helper.py', 'media_format.py', 'convert_media.py', 'merge_videos.py', 'validate_output.py', 'process_all.py',
            'app.py']
 
 # Matches the camera layout: DCIM/YYYY/MM/DD/<unixtimestamp>_<groupid>/
@@ -63,6 +63,8 @@ def make_workspace(tmp_path, path_prefix=None):
     # buffering and encoding bugs the tests are meant to catch
     for var in ('PYTHONUNBUFFERED', 'PYTHONUTF8', 'PYTHONIOENCODING'):
         env.pop(var, None)
+    # Day grouping uses the machine's local time; fix it so tests don't depend on it
+    env['TZ'] = 'UTC0'
     if path_prefix:
         env['PATH'] = str(path_prefix) + os.pathsep + env['PATH']
     return Workspace(app, env)

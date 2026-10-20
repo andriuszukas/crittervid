@@ -8,28 +8,14 @@ Read-only. Usage:
     python tools/inspect_media.py FILE_OR_EVENT_FOLDER [...]
 """
 import collections
-import struct
 import sys
 from pathlib import Path
 
-HEADER = struct.Struct('<IIIIQ')
+# The format itself lives in media_format.py at the repository root
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from media_format import MediaFormatError, read_records  # noqa: E402
+
 TYPE_NAMES = {0: 'video frame', 1: 'video keyframe', 3: 'audio'}
-
-
-def read_records(data):
-    """Yield (type, payload_length, timestamp_us, payload) for each record.
-
-    Raises ValueError if the data doesn't consist exactly of whole records."""
-    pos = 0
-    while pos < len(data):
-        if pos + HEADER.size > len(data):
-            raise ValueError(f'{len(data) - pos} trailing bytes at offset {pos}')
-        rtype, length, _ms, _zero, t_us = HEADER.unpack_from(data, pos)
-        start = pos + HEADER.size
-        if start + length > len(data):
-            raise ValueError(f'record at offset {pos} runs past the end of the file')
-        yield rtype, length, t_us, data[start:start + length]
-        pos = start + length
 
 
 def summarise(paths):
@@ -65,7 +51,7 @@ def main(argv):
         files = sorted(p.glob('*.media')) if p.is_dir() else [p]
         try:
             summary = summarise(files)
-        except ValueError as e:
+        except MediaFormatError as e:
             print(f'{arg}: not a valid .media record stream: {e}')
             continue
         print(f'{arg} ({len(files)} file{"s" if len(files) != 1 else ""})')

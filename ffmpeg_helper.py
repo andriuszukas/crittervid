@@ -48,3 +48,24 @@ def get_ffmpeg_path():
 
     # Fallback to 'ffmpeg' and hope it's in PATH
     return 'ffmpeg'
+
+def get_ffprobe_path():
+    """
+    Find ffprobe, which comes with FFmpeg: next to the ffmpeg in use first, then
+    the same places as ffmpeg. Returns None if it can't be found.
+    """
+    ffmpeg = get_ffmpeg_path()
+    folder = os.path.dirname(shutil.which(ffmpeg) or ffmpeg)
+    for name in ('ffprobe', 'ffprobe.exe'):
+        candidate = os.path.join(folder, name)
+        if folder and os.path.isfile(candidate):
+            return candidate
+    if getattr(sys, 'frozen', False):
+        script_dir = sys._MEIPASS
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+    for name in ('ffprobe', 'ffprobe.exe'):
+        candidate = os.path.join(script_dir, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return shutil.which('ffprobe')

@@ -73,6 +73,9 @@ def main():
         data = b''
         with open(in_path, encoding='utf-8') as filelist:
             for line in filelist:
+                # Directives such as `inpoint 0` apply to the file before them
+                if line.split(' ', 1)[0] in ('inpoint', 'outpoint', 'duration'):
+                    continue
                 with open(parse_concat_line(line), 'rb') as f:
                     data += f.read()
     else:
