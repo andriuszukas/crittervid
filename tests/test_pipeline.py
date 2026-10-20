@@ -159,7 +159,7 @@ def test_validate_reports_a_merged_day_shorter_than_its_events(ws):
     result = ws.run('validate_output.py')
 
     assert result.returncode == 1
-    assert 'merged 2026/10/01 is 1.00 s long, but its 2 converted files add up to 2.00 s' in result.stdout
+    assert 'merged 2026/10/01 part 1 of 1 is 1.00 s long, but its 2 converted files add up to 2.00 s' in result.stdout
 
 
 def test_validate_passes_a_complete_pipeline_run_and_checks_merged_days(ws):
@@ -279,3 +279,70 @@ def test_process_all_output_is_in_order_when_piped(ws):
             < index('=== Step 2') < index('Merged 1 files')
             < index('=== Step 3') < index('Checking ')
             < index('=== Summary'))
+
+
+# --- Removing merged files left from an earlier split setting ---
+
+def merged_dir(ws):
+    [day] = {f.parent for f in ws.files('merged_*.mp4')}
+    return day
+
+
+def test_merge_only_removes_files_it_wrote_itself(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    day = merged_dir(ws)
+    (day / 'merged_my_best_bits.mp4').write_bytes(b'OKmine')
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert result.returncode == 0, result.stdout
+    assert sorted(f.name for f in day.glob('*.mp4')) == [
+        'merged_20251001_0000_20251001_1200_part1of2.mp4',
+        'merged_20251001_1200_20251002_0000_part2of2.mp4',
+        'merged_my_best_bits.mp4']
+
+
+def test_merge_keeps_older_files_holding_more_footage(ws):
+    # The converted files of one event were deleted to save space; the earlier
+    # merged file is now the only copy of that footage
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    ws.converted('0002.media').unlink()
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert 'WARNING: kept 1 merged files' in result.stdout
+    assert len(list(merged_dir(ws).glob('merged_*_part1of1.mp4'))) == 1
+
+
+def test_merge_keeps_older_files_when_this_merge_failed(ws):
+    # The old file holds no more footage than the new parts would, so only the
+    # failed merge is a reason to keep it
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    ws.converted('0002.media').write_bytes(b'BAD')   # the stand-in can't join this
+
+    assert ws.run('merge_videos.py', '--splits-per-day', '2').returncode == 1
+
+    assert len(list(merged_dir(ws).glob('merged_*_part1of1.mp4'))) == 1
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='only Windows refuses to delete an open file')
+def test_merge_carries_on_when_an_old_file_is_open_elsewhere(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+
+    with open(old, 'rb'):   # e.g. still open in a video player
+        result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert result.returncode == 0, result.stdout
+    assert "WARNING: couldn't remove" in result.stdout
+    assert (ws.root / 'output' / 'merged' / 'merge_summary.txt').is_file()

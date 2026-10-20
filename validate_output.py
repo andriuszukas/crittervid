@@ -29,7 +29,8 @@ FFPROBE = None
 
 EVENT_FILE = re.compile(r'\d{10,}_\d{4}\.mp4')
 SEGMENT_FILE = re.compile(r'\d{10,}_\d{4}_\d+\.mp4')
-MERGED_FILE = re.compile(r'merged_\d{8}_\d{4}_\d{8}_\d{4}(?:_part\d+of(\d+))?\.mp4')
+# The merge step's file names, shared so the two agree on what it writes
+from merge_videos import MERGED_NAME as MERGED_FILE  # noqa: E402
 
 # An event's audio is cut to its video's span; AAC's 128 ms blocks and the last
 # frame's estimated length leave at most a few hundredths of a second between them
@@ -149,59 +150,80 @@ def check_converted(path, p):
 
 
 def split_set(path):
-    """The --splits-per-day setting a merged file was made with (1 if none)."""
+    """(N, K) for a merged file named ..._part<K>of<N>.mp4, or (None, None) for an
+    older name without a part number (a whole day)."""
     m = MERGED_FILE.fullmatch(path.name)
-    return int(m.group(1)) if m and m.group(1) else 1
+    if m and m.group(2):
+        return int(m.group(2)), int(m.group(1))
+    return None, None
+
+
+def check_merged_part(label, part, sources, probes):
+    """Compare one merged file with the converted files it was made from."""
+    p = probes[part]
+    problems = []
+    # The merge joins each file up to where its video ends, so a part holds the
+    # sum of its files' video ends, less the first file's lead-in: a merged file
+    # starts at its first frame
+    expected = sum(s.end() for s in sources) - max(sources[0].streams['video'][0], 0)
+    length = p.streams['video'][1]
+    if abs(length - expected) > MERGED_TOLERANCE_S + MERGED_TOLERANCE_PER_FILE_S * len(sources):
+        problems.append(f'ERROR: {label} is {length:.2f} s long, but its {len(sources)} '
+                        f'converted files add up to {expected:.2f} s')
+    if any('audio' in s.streams for s in sources):
+        if 'audio' not in p.streams:
+            problems.append(f'ERROR: {part}: no audio, although its converted files have audio')
+        elif abs(p.streams['audio'][1] - length) > AV_TOLERANCE_S:
+            problems.append(f'ERROR: {part}: audio is {p.streams["audio"][1]:.2f} s long but the video '
+                            f'is {length:.2f} s long')
+    return problems
 
 
 def check_merged_days(converted, merged, probes):
-    """Compare each merged day with the converted files it was made from, grouped
-    the same way the merge step groups them."""
+    """Compare each merged file with the converted files it was made from,
+    grouped and split the same way the merge step does it."""
     import merge_videos
     merge_videos.OUTPUT_ROOT, merge_videos.MERGED_ROOT = OUTPUT_ROOT, MERGED_ROOT
     found = defaultdict(list)
     for path in merged:
-        found[path.parent.relative_to(MERGED_ROOT).as_posix()].append(path)
+        if MERGED_FILE.fullmatch(path.name):   # other names only get the name warning
+            found[path.parent.relative_to(MERGED_ROOT).as_posix()].append(path)
 
     problems = []
     for day_start, files in sorted(merge_videos.group_files_by_day(converted).items()):
         day = day_start.strftime('%Y/%m/%d')
         parts = found.pop(day, [])
-        sources = [probes[f] for _, f in files]
-        if any(check_file(f, p) for (_, f), p in zip(files, sources)):
+        files = [f for _, f in files]
+        if any(check_file(f, probes[f]) for f in files):
             continue   # its unreadable or unusable files are reported already
         if not parts:
             problems.append(f'ERROR: no merged file for {day} ({len(files)} converted files)')
             continue
-        total = sum(p.end() for p in sources)
-        has_audio = any('audio' in p.streams for p in sources)
-        sets = defaultdict(list)
+        sets = defaultdict(dict)
         for part in parts:
-            sets[split_set(part)].append(part)
+            n, k = split_set(part)
+            sets[n][k] = part
         if len(sets) > 1:
-            problems.append(f'WARNING: merged {day} has files from more than one split setting '
-                            f'({", ".join(str(n) for n in sorted(sets))} per day); older ones repeat the same footage')
-        for n, set_parts in sorted(sets.items()):
-            if any(check_file(part, probes[part]) for part in set_parts):
+            problems.append(f'WARNING: merged {day} has files from more than one split setting; '
+                            f'the older ones repeat the same footage')
+        for n, set_parts in sorted(sets.items(), key=lambda item: item[0] or 0):
+            if any(check_file(part, probes[part]) for part in set_parts.values()):
                 continue   # reported as unusable already
-            # A merged file's own video can start a few ms late (the AAC encoder's
-            # start delay); what must match is how much video it holds
-            merged_total = sum(probes[part].streams['video'][1] for part in set_parts)
-            difference = abs(merged_total - total)
-            tolerance = MERGED_TOLERANCE_S + MERGED_TOLERANCE_PER_FILE_S * len(files)
-            # Converted files whose video starts late (#77) can make the merged day
-            # up to that much shorter: explain such a difference instead of failing
-            late = sum(p.streams['video'][0] for p in sources if p.streams['video'][0] > START_TOLERANCE_S)
-            label = f'merged {day}' + (f' ({n} per day)' if len(sets) > 1 else '')
-            if difference > tolerance + late:
-                problems.append(f'ERROR: {label} is {merged_total:.2f} s long, but its {len(files)} '
-                                f'converted files add up to {total:.2f} s')
-            elif difference > tolerance:
-                problems.append(f'WARNING: {label} is {merged_total:.2f} s long, {difference:.2f} s different '
-                                f'from its converted files, because some of their videos start late (#77)')
-            if has_audio:
-                problems += [f'ERROR: {part}: no audio, although its converted files have audio'
-                             for part in set_parts if 'audio' not in probes[part].streams]
+            if n is None:   # an older whole-day name
+                [(_, part)] = set_parts.items()
+                problems += check_merged_part(f'merged {day}', part, [probes[f] for f in files], probes)
+                continue
+            size = -(-len(files) // n)   # the merge's split: ceil(files / N) per part
+            for k in range(1, n + 1):
+                chunk = files[(k - 1) * size:k * size]
+                part = set_parts.get(k)
+                if chunk and part is None:
+                    problems.append(f'ERROR: merged {day}: part {k} of {n} is missing')
+                elif part is not None and not chunk:
+                    problems.append(f'WARNING: {part}: no converted files belong in this part')
+                elif part is not None:
+                    problems += check_merged_part(f'merged {day} part {k} of {n}', part,
+                                                  [probes[f] for f in chunk], probes)
     for day in sorted(found):
         problems.append(f'WARNING: merged files for {day} have no matching converted files')
     return problems

@@ -126,7 +126,7 @@ if output_dir:
 st.header("Pipeline Parameters")
 accel_display = st.selectbox("Hardware Acceleration", ["Auto", "CPU", "NVIDIA", "Intel", "AMD"], help="Select hardware acceleration method. NVidia GPUs are the best.", index=0)
 workers = st.number_input("Number of videos to process in parallel", min_value=1, max_value=32, value=4, help="Number of videos to process in parallel.")
-splits_per_day = st.number_input("How many mp4 files to generate per day?", min_value=1, max_value=24, value=1, help="Number of videosplits to create per day.")
+splits_per_day = st.number_input("How many mp4 files to generate per day?", min_value=1, max_value=24, value=1, help="Number of merged files per day. Changing it and running again replaces each day's earlier merged files (files holding footage the new ones lack are kept, with a warning).")
 validate = st.checkbox("Validate output after processing", help="Check that the outputs have video and audio of the right length and that merged days are complete. Takes seconds.", value=True)
 
 st.header("Run Pipeline")

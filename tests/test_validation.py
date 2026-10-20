@@ -160,30 +160,37 @@ def test_validate_reports_a_day_with_no_merged_file(ws):
     assert 'no merged file for 2026/10/02' in result.stdout
 
 
-def test_validate_counts_the_start_of_each_video_in_a_merged_day(ws):
-    # The merge cuts each file where its video ends, so a video that starts late
-    # adds its start to the day
+def test_validate_counts_the_lead_in_of_a_late_video_inside_a_merged_part(ws):
+    # The merge joins each file up to where its video ends, so a later file whose
+    # video starts late (#77) brings its lead-in into the merged part
+    event_file(ws, '1790834400_0010.mp4', b'OKa')
+    event_file(ws, '1790835000_0010.mp4', b'OKLATESTART')
+    merged_file(ws, b'OKOKaOKLATESTART')   # 1 s + (0.8 + 1) s
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 0, result.stdout
+    assert not lines(result, 'WARNING: merged')
+
+
+def test_validate_leaves_out_the_lead_in_of_a_late_first_video(ws):
+    # A merged file starts at its first frame, so the first file's lead-in isn't in it
     event_file(ws, '1790834400_0010.mp4', b'OKLATESTART')
     event_file(ws, '1790835000_0010.mp4', b'OKb')
-    merged_file(ws, b'OKOKLATESTARTOKb')   # 1.8 s + 1 s
+    merged_file(ws, b'OKOKxOKb')   # 1 s + 1 s
 
     assert ws.run('validate_output.py').returncode == 0
 
-    # 2 s: short by exactly the late start, as when FFmpeg drops a late-starting
-    # first file's lead-in (#77): explained, so only a warning
-    merged_file(ws, b'OKOKaOKb')
-    result = ws.run('validate_output.py')
 
-    assert result.returncode == 0
-    assert 'WARNING: merged 2026/10/01 is 2.00 s long, 0.80 s different' in result.stdout
-    assert '#77' in result.stdout
+def test_validate_reports_a_merged_part_missing_footage(ws):
+    event_file(ws, '1790834400_0010.mp4', b'OKa')
+    event_file(ws, '1790835000_0010.mp4', b'OKLATESTART')
+    merged_file(ws, b'OKOKa')   # the second event is missing
 
-    # 1 s: shorter than the late start explains, so footage is missing
-    merged_file(ws, b'OKOKa')
     result = ws.run('validate_output.py')
 
     assert result.returncode == 1
-    assert 'merged 2026/10/01 is 1.00 s long, but its 2 converted files add up to 2.80 s' in result.stdout
+    assert 'merged 2026/10/01 part 1 of 1 is 1.00 s long, but its 2 converted files add up to 2.80 s' in result.stdout
 
 
 def test_validate_checks_each_set_of_merged_files_and_warns_about_leftovers(ws):
@@ -209,7 +216,7 @@ def test_validate_fails_when_a_set_of_merged_files_is_short(ws):
     result = ws.run('validate_output.py')
 
     assert result.returncode == 1
-    assert any('2026/10/01' in line and '1.00 s' in line and '2.00 s' in line for line in lines(result, 'ERROR')), result.stdout
+    assert 'ERROR: merged 2026/10/01: part 2 of 2 is missing' in result.stdout
 
 
 def test_validate_ignores_old_segment_files_next_to_the_event_file(ws):
@@ -320,3 +327,38 @@ def test_validate_accepts_an_output_folder_without_videos(ws):
 
     assert result.returncode == 0
     assert 'No output videos' in result.stdout
+
+
+# --- Second review: real #77 shape, finer tolerances, merged audio ---
+
+def test_validate_accepts_audio_running_to_the_end_of_a_late_video(ws):
+    # Real #77 files: video from 0.8 s, audio from 0 to the video's end
+    event_file(ws, '1790834400_0010.mp4', b'OKLATEAUDIOEND')
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 0, result.stdout
+    assert lines(result, 'WARNING') and 'starts at 0.80 s' in result.stdout
+
+
+def test_validate_catches_a_small_difference_in_a_merged_day(ws):
+    # 50 ms is far more than a correct merge differs by (measured: 0.000 s)
+    event_file(ws, '1790834400_0010.mp4', b'OKa')
+    event_file(ws, '1790835000_0010.mp4', b'OKb')
+    merged_file(ws, b'OKOKaOKbPLUS50MS')
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 1
+    assert 'is 2.05 s long, but its 2 converted files add up to 2.00 s' in result.stdout
+
+
+def test_validate_reports_merged_audio_longer_than_its_video(ws):
+    event_file(ws, '1790834400_0010.mp4', b'OKa')
+    event_file(ws, '1790835000_0010.mp4', b'OKb')
+    merged_file(ws, b'OKOKaOKbAUDIOSHORT')
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 1
+    assert any('audio is 1.00 s long but the video is 2.00 s long' in line for line in lines(result, 'ERROR'))

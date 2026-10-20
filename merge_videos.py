@@ -19,6 +19,8 @@ SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
 # Converted files: one per event (<timestamp>_<duration>.mp4) for the cameras'
 # record format, or one per segment (<timestamp>_<duration>_<offset>.mp4)
 FILENAME_RE = re.compile(r'(?:^|[\\/])(\d{10,})_(\d{4})(?:_\d+)?\.mp4$')
+# Names of the files this step writes: merged_<start>_<end>[_part<K>of<N>].mp4
+MERGED_NAME = re.compile(r'merged_\d{8}_\d{4}_\d{8}_\d{4}(?:_part(\d+)of(\d+))?\.mp4')
 
 def find_mp4_files(root):
     for dirpath, _, filenames in os.walk(root):
@@ -112,15 +114,57 @@ def merge_group(period_start, files, summary, split_idx=None, total_splits=None)
     return out_path
 
 
+def video_length(path):
+    """The length of a file's video stream in seconds, or None if unknown."""
+    if not FFPROBE_PATH:
+        return None
+    result = subprocess.run([FFPROBE_PATH, '-v', 'error', '-select_streams', 'v:0',
+                             '-show_entries', 'stream=duration', '-of', 'csv=p=0', str(path)],
+                            capture_output=True, text=True, encoding='utf-8', errors='replace')
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
 def remove_stale_merges(day_dir, written, summary):
-    """Delete merged files in a day's folder that this run didn't write: they're
-    left from an earlier --splits-per-day setting and repeat the same footage."""
-    for old in sorted(day_dir.glob('merged_*.mp4')):
-        if old not in written:
+    """Delete merged files left in a day's folder by an earlier --splits-per-day
+    setting: they repeat the footage this run just merged.
+
+    Only files with the exact names this step writes are considered, and only if
+    together they hold no more video than this run's files, so footage that's no
+    longer among the converted files (e.g. deleted to save space) is never lost.
+    A file that can't be deleted (e.g. open in a video player) is left with a
+    warning."""
+    def warn(msg):
+        print(f"WARNING: {msg}")
+        summary.append(f"WARNING: {msg}")
+
+    stale = [f for f in sorted(day_dir.glob('merged_*.mp4'))
+             if f not in written and MERGED_NAME.fullmatch(f.name)]
+    if not stale:
+        return
+    old_total = [video_length(f) for f in stale]
+    new_total = [video_length(f) for f in written]
+    if None in old_total or None in new_total:
+        warn(f"kept {len(stale)} merged files in {day_dir} from an earlier split setting: "
+             f"their length couldn't be checked (is ffprobe installed?)")
+        return
+    # Correct merges of the same footage match to within milliseconds
+    if sum(old_total) > sum(new_total) + 0.1:
+        warn(f"kept {len(stale)} merged files in {day_dir} from an earlier split setting: "
+             f"they hold {sum(old_total):.1f} s of video, more than the {sum(new_total):.1f} s merged now, "
+             f"so they may contain footage whose converted files are gone")
+        return
+    for old in stale:
+        try:
             old.unlink()
-            msg = f"Removed {old} (left from an earlier split setting)"
-            print(msg)
-            summary.append(f"REMOVED: {msg}")
+        except OSError as e:
+            warn(f"couldn't remove {old} (left from an earlier split setting): {e}")
+            continue
+        msg = f"Removed {old} (left from an earlier split setting)"
+        print(msg)
+        summary.append(f"REMOVED: {msg}")
 
 def main():
     # Paths can contain characters the console's code page can't encode (e.g. the

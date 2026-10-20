@@ -14,6 +14,9 @@ Markers in the content describe imperfect files:
 - b'LATESTART': the video starts at 0.8 s (in a merged file, whose inputs are cut
   at their video's end, that adds 0.8 s to the length for each marker)
 - b'AUDIOSHORT': the audio is half as long as the video
+- b'LATEAUDIOEND': the video starts at 0.8 s and the audio runs from 0 to the
+  video's end, as in real files whose first frame is placed late (#77)
+- b'PLUS50MS': 50 ms longer, per marker (to test tolerances finer than 1 s)
 - b'NODURATION': the streams have no duration field
 - b'NOTMP4': the container is Matroska
 
@@ -56,11 +59,16 @@ def main():
     clips = data.count(b'OK') - (1 if merged else 0)
     length = float(max(clips, 1))
     start = 0.0
+    length += 0.05 * data.count(b'PLUS50MS')
     if b'LATESTART' in data:
         if merged:
             length += 0.8 * data.count(b'LATESTART')
         else:
             start = 0.8
+    audio_length = length
+    if b'LATEAUDIOEND' in data and not merged:
+        start = 0.8
+        audio_length = start + length
 
     def stream(kind, stream_length):
         fields = {'codec_type': kind, 'start_time': f'{start if kind == "video" else 0.0:.6f}'}
@@ -72,7 +80,7 @@ def main():
     if b'NOVIDEO' not in data:
         streams.append(stream('video', length))
     if b'NOAUDIO' not in data:
-        streams.append(stream('audio', length / 2 if b'AUDIOSHORT' in data else length))
+        streams.append(stream('audio', length / 2 if b'AUDIOSHORT' in data else audio_length))
 
     entries = args[args.index('-show_entries') + 1] if '-show_entries' in args else ''
     wanted = {}
