@@ -184,7 +184,9 @@ def check_merged_days(converted, merged, probes):
         for n, set_parts in sorted(sets.items()):
             if any(check_file(part, probes[part]) for part in set_parts):
                 continue   # reported as unusable already
-            merged_total = sum(probes[part].end() for part in set_parts)
+            # A merged file's own video can start a few ms late (the AAC encoder's
+            # start delay); what must match is how much video it holds
+            merged_total = sum(probes[part].streams['video'][1] for part in set_parts)
             difference = abs(merged_total - total)
             tolerance = MERGED_TOLERANCE_S + MERGED_TOLERANCE_PER_FILE_S * len(files)
             # Converted files whose video starts late (#77) can make the merged day

@@ -169,11 +169,21 @@ def test_validate_counts_the_start_of_each_video_in_a_merged_day(ws):
 
     assert ws.run('validate_output.py').returncode == 0
 
-    merged_file(ws, b'OKOKaOKb')   # 2 s: short by the late start
+    # 2 s: short by exactly the late start, as when FFmpeg drops a late-starting
+    # first file's lead-in (#77): explained, so only a warning
+    merged_file(ws, b'OKOKaOKb')
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 0
+    assert 'WARNING: merged 2026/10/01 is 2.00 s long, 0.80 s different' in result.stdout
+    assert '#77' in result.stdout
+
+    # 1 s: shorter than the late start explains, so footage is missing
+    merged_file(ws, b'OKOKa')
     result = ws.run('validate_output.py')
 
     assert result.returncode == 1
-    assert 'merged 2026/10/01 is 2.00 s long, but its 2 converted files add up to 2.80 s' in result.stdout
+    assert 'merged 2026/10/01 is 1.00 s long, but its 2 converted files add up to 2.80 s' in result.stdout
 
 
 def test_validate_checks_each_set_of_merged_files_and_warns_about_leftovers(ws):
