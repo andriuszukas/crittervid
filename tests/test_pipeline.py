@@ -1,5 +1,7 @@
 """Pipeline behaviour, using the fake ffmpeg from fake_ffmpeg.py."""
+import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -316,8 +318,41 @@ def test_merge_keeps_older_files_holding_more_footage(ws):
 
     result = ws.run('merge_videos.py', '--splits-per-day', '2')
 
-    assert 'WARNING: kept 1 merged files' in result.stdout
+    assert 'WARNING: kept 1 merged files' in result.stdout and 'are gone' in result.stdout
     assert len(list(merged_dir(ws).glob('merged_*_part1of1.mp4'))) == 1
+
+
+def test_merge_keeps_older_files_when_an_event_was_replaced(ws):
+    # Same number of files (and so the same total length) as before, but one
+    # event's converted file is gone: the old merged file is its only copy
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    gone = ws.converted('0002.media')
+    gone.rename(gone.with_name('1759300000_0001_0003.mp4'))
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert result.returncode == 0, result.stdout
+    assert 'WARNING: kept 1 merged files' in result.stdout and gone.name in result.stdout
+    assert len(list(merged_dir(ws).glob('merged_*_part1of1.mp4'))) == 1
+
+
+def test_merge_records_what_each_merged_file_holds(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py', '--splits-per-day', '2').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+
+    day = merged_dir(ws)
+    record = json.loads((day / 'merged_contents.json').read_text(encoding='utf-8'))
+    out = ws.root / 'output'
+    assert record == {f.name: sorted(Path(os.path.relpath(c, out)).as_posix()
+                                     for c in (ws.converted('0001.media'), ws.converted('0002.media')))
+                      for f in day.glob('merged_*.mp4')}
+    assert len(record) == 1   # the parts of the 2-per-day set were removed and forgotten
 
 
 def test_merge_keeps_older_files_when_this_merge_failed(ws):
@@ -348,16 +383,32 @@ def test_merge_carries_on_when_an_old_file_is_open_elsewhere(ws):
     assert (ws.root / 'output' / 'merged' / 'merge_summary.txt').is_file()
 
 
-def test_merge_keeps_older_files_whose_length_cant_be_checked(ws):
+def test_merge_keeps_older_files_it_has_no_record_of(ws):
+    # Made by an earlier version, which didn't record what each file holds
     ws.add_media('0001.media', b'good')
     assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
     assert ws.run('merge_videos.py').returncode == 0
     [old] = merged_dir(ws).glob('merged_*.mp4')
-    old.write_bytes(b'not a video')   # ffprobe can't read it
+    (old.parent / 'merged_contents.json').unlink()
 
     result = ws.run('merge_videos.py', '--splits-per-day', '2')
 
-    assert "WARNING: kept 1 merged files" in result.stdout and "couldn't be checked" in result.stdout
+    assert "WARNING: kept 1 merged files" in result.stdout and "didn't record" in result.stdout
+    assert old.exists()
+
+
+@pytest.mark.parametrize('record', ['not json', '[]', '{"%s": 5}'])
+def test_merge_keeps_older_files_when_its_record_is_damaged(ws, record):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+    (old.parent / 'merged_contents.json').write_text(record.replace('%s', old.name), encoding='utf-8')
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert result.returncode == 0, result.stdout
+    assert "WARNING: kept 1 merged files" in result.stdout
     assert old.exists()
 
 
@@ -365,9 +416,25 @@ def test_process_all_repeats_merge_warnings_in_its_summary(ws):
     ws.add_media('0001.media', b'good')
     assert ws.run('process_all.py', '--accel', 'cpu').returncode == 0
     [old] = merged_dir(ws).glob('merged_*.mp4')
-    old.write_bytes(b'not a video')
+    (old.parent / 'merged_contents.json').unlink()
 
     result = ws.run('process_all.py', '--accel', 'cpu', '--splits-per-day', '2', '--no-validate')
 
     summary = result.stdout[result.stdout.index('=== Summary ==='):]
     assert 'Merge WARNING: kept 1 merged files' in summary
+
+
+def test_process_all_doesnt_repeat_warnings_from_an_earlier_merge(ws):
+    ws.add_media('0001.media', b'good')
+    report = ws.root / 'output' / 'merged' / 'merge_summary.txt'
+    report.parent.mkdir(parents=True)
+    report.write_text('WARNING: from an earlier run\n', encoding='utf-8')
+    # A file where the day's merged folder should be stops the merge before it
+    # writes its report
+    (report.parent / '2025' / '10').mkdir(parents=True)
+    (report.parent / '2025' / '10' / '01').write_bytes(b'')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--no-validate')
+
+    assert result.returncode == 1
+    assert 'from an earlier run' not in result.stdout

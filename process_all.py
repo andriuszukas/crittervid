@@ -66,6 +66,7 @@ def main():
         rc1 = subprocess.run([sys.executable, CONVERT_SCRIPT] + convert_args).returncode
 
     print("=== Step 2: Merge .mp4 files into longer clips ===")
+    merge_summary = os.path.join(args.output_dir, 'merged', 'merge_summary.txt')
     merge_args = []
     if args.output_dir:
         merge_args += ['--output-dir', args.output_dir]
@@ -75,6 +76,12 @@ def main():
         print(f"[DRY RUN] Would run: python {MERGE_SCRIPT} {' '.join(merge_args)}")
         rc2 = 0
     else:
+        # Remove the previous run's report first, so it can't be mistaken for this
+        # run's if the merge stops before writing one
+        try:
+            os.remove(merge_summary)
+        except OSError:
+            pass
         rc2 = subprocess.run([sys.executable, MERGE_SCRIPT] + merge_args).returncode
 
     if args.validate:
@@ -99,10 +106,10 @@ def main():
 
     print("=== Summary ===")
     print(f"Conversion summary: {os.path.join(args.output_dir, 'conversion_summary.txt')}")
-    merge_summary = os.path.join(args.output_dir, 'merged', 'merge_summary.txt')
     print(f"Merging summary: {merge_summary}")
     # Repeat the merge's warnings (e.g. older merged files it kept), which are
-    # otherwise easy to miss among the step's output
+    # otherwise easy to miss among the step's output. The report is this run's:
+    # an earlier one was removed before the step
     if not args.dry_run and os.path.isfile(merge_summary):
         with open(merge_summary, encoding='utf-8') as f:
             for line in f:

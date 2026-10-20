@@ -18,7 +18,9 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
   Auto-detection can't detect NVIDIA on Python 3.12+ ([#2](https://github.com/andriuszukas/crittervid/issues/2)), so choose your GPU explicitly.
 - **Merge** converted clips into one or more files per day (`--splits-per-day`). Merging a day
   again with a different number replaces that day's earlier merged files, unless they hold
-  footage the new ones don't (e.g. after deleting converted files to save space).
+  footage the new ones don't (e.g. after deleting converted files to save space). Each day's
+  `merged_contents.json` records which events each merged file holds; merged files made by
+  earlier versions have no record, so they're kept and you're told about them.
 - **Validate** the output in seconds: every event file has video and audio of matching length,
   each merged day is as long as its events, and every file has an expected name. `--deep-validate`
   also decodes everything in full (about as long as the footage).
@@ -88,6 +90,7 @@ Key options: `--accel {cpu,cuda,qsv,vaapi,amf,auto}`, `--workers N`, `--copy`
 output/
   YYYY/MM/DD/<timestamp>_<duration>.mp4    # one file per recorded event
   merged/YYYY/MM/DD/merged_*.mp4           # merged daily clips
+  merged/YYYY/MM/DD/merged_contents.json    # which events each merged clip holds
   conversion_summary.txt                   # per-run reports
   merged/merge_summary.txt
 ```
