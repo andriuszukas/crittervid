@@ -149,7 +149,8 @@ def write_event(dcim, start, seconds, segment_seconds=13, audio_offset_us=38_000
     records[-1] += [(0, 0, bytes(8))] * garbage_tail
     if leftovers_first_s is not None:
         first = t0 - int(leftovers_first_s * 1_000_000)
-        records[0].insert(0, (first, 1, frames[1][0] + frames[0][0]))
+        leftovers = b''.join(payload for payload, _ in frames[1:4])   # real ones held 3 to 31
+        records[0].insert(0, (first, 1, leftovers + frames[0][0]))
         stamps.insert(0, first)
 
     for name, recs in zip(names, records):

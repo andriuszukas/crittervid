@@ -114,8 +114,8 @@ def read_event(segments):
         notes.append("no video frame is a keyframe with its parameter sets, so the video may not play")
         return video, audio, notes
     if start:
-        notes.append(f"{start} video frames at the start were dropped: they can't be decoded "
-                     f"without an earlier keyframe that isn't on the card")
+        notes.append(f"{start} video frames at the start (and any audio before the first keyframe) "
+                     f"were dropped: they can't be decoded without an earlier keyframe that isn't on the card")
     t_us, payload, key = video[start]
     keyframe = media_format.from_parameter_sets(payload)
     if len(keyframe) < len(payload):

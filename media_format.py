@@ -89,7 +89,9 @@ def decodable_start(video):
     there's none.
 
     A frame without them holds only slices referring to an earlier picture the
-    card doesn't have, so it can't be decoded."""
+    card doesn't have, so it can't be decoded. (A camera that stored parameter
+    sets in records of their own would find none here; its events are then
+    converted as they are.)"""
     for i, (_, payload, _) in enumerate(video):
         if {NAL_IDR, NAL_SPS, NAL_PPS} <= nal_types(payload):
             return i
@@ -103,7 +105,8 @@ def from_parameter_sets(payload):
     of its parameter sets, left over from before the recording started. They
     can't be decoded, and FFmpeg takes them for frames of their own that share
     the keyframe's timestamp, which shifts the keyframe and the video's start,
-    more so when a long pause follows (#77)."""
+    more so when a long pause follows (#77). Anything else before the SPS (an
+    access unit delimiter or SEI) isn't needed to decode the keyframe."""
     pos = 0
     while (found := payload.find(b'\x00\x00\x01', pos)) >= 0:
         if found + 3 < len(payload) and payload[found + 3] & 0x1F == NAL_SPS:

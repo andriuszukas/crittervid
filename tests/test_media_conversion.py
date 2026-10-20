@@ -179,10 +179,10 @@ def test_first_keyframe_with_leftover_pictures_before_a_long_pause_keeps_its_tim
     result = convert(real_ws)
 
     out = only_output(real_ws)
-    assert any('earlier pictures' in line and 'removed' in line for line in warnings(result))
     assert float(streams(out)['video']['start_time']) == pytest.approx(0, abs=0.001)
     assert_camera_times(out, stamps)
     assert_audio_matches_video(out, (stamps[-1] - stamps[0]) / 1e6)
+    assert any('earlier pictures' in line and 'removed' in line for line in warnings(result))
 
 
 def test_truncated_last_segment_is_used_up_to_its_last_record(real_ws):

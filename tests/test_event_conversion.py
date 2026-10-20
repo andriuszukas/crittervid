@@ -157,7 +157,7 @@ def test_frames_before_the_first_keyframe_are_dropped_with_a_warning(ws):
     result = convert(ws)
 
     assert result.returncode == 0, result.stdout
-    assert any('WARNING' in line and '1 video frames at the start were dropped' in line
+    assert any('WARNING' in line and '1 video frames at the start' in line and 'dropped' in line
                for line in result.stdout.splitlines())
     data = event_output(ws).read_bytes()
     assert b'real' in data and b'broken' not in data
