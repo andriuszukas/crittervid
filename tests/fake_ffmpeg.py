@@ -8,11 +8,13 @@ command lines the pipeline builds to simulate success and failure:
   listed file contains b'BAD'.
 - Decode to null (validate): exits 0 only if the file starts with b'OK'.
 
-If FAKE_FFMPEG_LOG is set, each command line is appended to that file as JSON.
+If FAKE_FFMPEG_LOG is set, each command line is written as JSON to its own file
+named <FAKE_FFMPEG_LOG>.<pid>.<id>.
 """
 import json
 import os
 import sys
+import uuid
 
 
 def parse_concat_line(line):
@@ -60,8 +62,11 @@ def fail(out_path):
 def main():
     args = sys.argv[1:]
     if os.environ.get('FAKE_FFMPEG_LOG'):
-        with open(os.environ['FAKE_FFMPEG_LOG'], 'a', encoding='utf-8') as log:
-            log.write(json.dumps(args) + '\n')
+        # One file per call: calls run in parallel, and appends to one shared file
+        # from several processes can interleave (seen on Windows)
+        log = f"{os.environ['FAKE_FFMPEG_LOG']}.{os.getpid()}.{uuid.uuid4().hex}"
+        with open(log, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(args))
     out_path = args[-1]
     in_path = args[args.index('-i') + 1]
 

@@ -39,9 +39,10 @@ class Workspace:
         return sorted((self.root / 'output').rglob(pattern))
 
     def ffmpeg_calls(self):
-        """Command lines the fake ffmpeg received, when FAKE_FFMPEG_LOG is set."""
+        """Command lines the fake ffmpeg received, when FAKE_FFMPEG_LOG is set
+        (it writes one file per call, named after the log path)."""
         log = Path(self.env['FAKE_FFMPEG_LOG'])
-        return [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+        return [json.loads(f.read_text(encoding='utf-8')) for f in sorted(log.parent.glob(log.name + '.*'))]
 
     def run(self, script, *args):
         return subprocess.run(
