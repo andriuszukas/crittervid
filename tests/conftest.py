@@ -72,16 +72,18 @@ def make_workspace(tmp_path, path_prefix=None):
 
 @pytest.fixture
 def fake_ffmpeg_dir(tmp_path):
-    """A directory holding an `ffmpeg` command that runs tests/fake_ffmpeg.py."""
+    """A directory holding `ffmpeg` and `ffprobe` commands that run
+    tests/fake_ffmpeg.py and tests/fake_ffprobe.py."""
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
-    fake = TESTS_DIR / 'fake_ffmpeg.py'
-    if os.name == 'nt':
-        (bin_dir / 'ffmpeg.bat').write_text(f'@"{sys.executable}" "{fake}" %*\r\n')
-    else:
-        launcher = bin_dir / 'ffmpeg'
-        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n')
-        launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    for tool in ('ffmpeg', 'ffprobe'):
+        fake = TESTS_DIR / f'fake_{tool}.py'
+        if os.name == 'nt':
+            (bin_dir / f'{tool}.bat').write_text(f'@"{sys.executable}" "{fake}" %*\r\n')
+        else:
+            launcher = bin_dir / tool
+            launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n')
+            launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
     return bin_dir
 
 

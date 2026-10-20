@@ -70,7 +70,7 @@ python process_all.py --input-dir input/DCIM --output-dir output --accel cuda
 # Individual steps
 python convert_media.py --input-dir input/DCIM --output-dir output --accel cuda
 python merge_videos.py --output-dir output --splits-per-day 2
-python validate_output.py --output-dir output --accel cuda
+python validate_output.py --output-dir output            # add --deep to decode every file
 
 # Retry only the files that failed in the previous run
 python convert_media.py --retry-failed --max-retries 5

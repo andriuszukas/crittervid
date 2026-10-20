@@ -129,7 +129,72 @@ def test_validate_fails_on_unplayable_output(ws):
     result = ws.run('validate_output.py')
 
     assert result.returncode == 1
-    assert 'UNPLAYABLE' in result.stdout
+    assert 'unreadable' in result.stdout
+
+
+def event_file(ws, name, content):
+    path = ws.root / 'output' / '2026' / '10' / '01' / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
+
+
+def test_validate_reports_an_event_file_without_audio(ws):
+    event_file(ws, '1790834400_0010.mp4', b'OKNOAUDIO')
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 1
+    assert 'no audio track' in result.stdout
+
+
+def test_validate_reports_a_merged_day_shorter_than_its_events(ws):
+    # Two events that day, but the merged file only contains one of them
+    event_file(ws, '1790834400_0010.mp4', b'OKa')
+    event_file(ws, '1790835000_0010.mp4', b'OKb')
+    merged = ws.root / 'output' / 'merged' / '2026' / '10' / '01' / 'merged_20261001_0000_20261002_0000_part1of1.mp4'
+    merged.parent.mkdir(parents=True)
+    merged.write_bytes(b'OKOKa')
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 1
+    assert 'merged 2026/10/01 is 1.00 s long, but its 2 converted files add up to 2.00 s' in result.stdout
+
+
+def test_validate_passes_a_complete_pipeline_run_and_checks_merged_days(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 0, result.stdout
+    assert 'All output videos passed the checks.' in result.stdout
+    assert 'WARNING' not in result.stdout
+
+
+def test_validate_warns_about_unexpected_names(ws):
+    event_file(ws, '1790834400_0010.mp4', b'OKa')
+    event_file(ws, 'holiday video.mp4', b'OKb')
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 0
+    assert 'holiday video.mp4: not a name the converter writes' in result.stdout
+
+
+def test_deep_validation_decodes_each_file_once(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    ws.env['FAKE_FFMPEG_LOG'] = str(ws.root / 'ffmpeg_calls.jsonl')
+
+    assert ws.run('validate_output.py', '--deep').returncode == 0
+
+    decoded = [args[args.index('-i') + 1] for args in ws.ffmpeg_calls() if args[-1] == '-']
+    assert len(decoded) == len(set(decoded)) == 2   # the converted file and the merged file
 
 
 # --- Full pipeline ---
@@ -212,5 +277,5 @@ def test_process_all_output_is_in_order_when_piped(ws):
 
     assert (index('=== Step 1') < index('Found 1 .media')
             < index('=== Step 2') < index('Merged 1 files')
-            < index('=== Step 3') < index('Validating converted')
+            < index('=== Step 3') < index('Checking ')
             < index('=== Summary'))

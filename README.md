@@ -17,7 +17,9 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
   record format, which FFmpeg has to re-encode: NVIDIA (CUDA), Intel (QSV), AMD (AMF), or CPU.
   Auto-detection can't detect NVIDIA on Python 3.12+ ([#2](https://github.com/andriuszukas/crittervid/issues/2)), so choose your GPU explicitly.
 - **Merge** converted clips into one or more files per day (`--splits-per-day`).
-- **Validate** every output by re-decoding it to confirm it plays.
+- **Validate** the output in seconds: every event file has video and audio of matching length,
+  each merged day is as long as its events, and every file has an expected name. `--deep-validate`
+  also decodes everything in full (about as long as the footage).
 - **Robust** — skips already-converted files, retries failures, handles Ctrl+C gracefully, and writes summary reports.
 - **GUI or CLI** — a Streamlit web UI, or run each stage directly from the terminal.
 
@@ -66,7 +68,7 @@ python process_all.py --input-dir input/DCIM --output-dir output --accel cuda
 # Individual stages
 python convert_media.py --input-dir input/DCIM --output-dir output --accel cuda
 python merge_videos.py --output-dir output --splits-per-day 2
-python validate_output.py --output-dir output --accel cuda
+python validate_output.py --output-dir output            # add --deep to decode every file
 
 # Retry only files that failed a previous run
 python convert_media.py --retry-failed --max-retries 5
@@ -76,7 +78,7 @@ python process_all.py --dry-run
 ```
 
 Key options: `--accel {cpu,cuda,qsv,vaapi,amf,auto}`, `--workers N`, `--copy`
-(stream-copy without re-encoding), `--splits-per-day N`, `--no-validate`.
+(stream-copy without re-encoding), `--splits-per-day N`, `--no-validate`, `--deep-validate`.
 
 ## Output
 
