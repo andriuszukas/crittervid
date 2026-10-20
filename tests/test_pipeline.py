@@ -461,3 +461,38 @@ def test_merge_records_a_file_before_replacing_it(ws):
     assert old.read_bytes() == before   # not replaced by a file the record doesn't describe
     assert "couldn't record its contents" in result.stdout
     assert ws.files('*.part') == []
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='only Windows refuses to replace an open file')
+def test_merge_still_knows_what_a_file_it_couldnt_replace_holds(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+    before = old.read_bytes()
+    ws.converted('0001.media').unlink()   # its footage is now only in the old file
+
+    with open(old, 'rb'):   # e.g. still open in a video player
+        result = ws.run('merge_videos.py')
+    assert result.returncode == 1
+    assert "couldn't replace the earlier file" in result.stdout
+    assert old.read_bytes() == before
+    assert ws.files('*.part') == []
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+    assert 'WARNING: kept 1 merged files' in result.stdout and 'are gone' in result.stdout
+    assert old.read_bytes() == before
+
+
+def test_merge_forgets_events_a_replaced_file_no_longer_holds(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    ws.converted('0001.media').unlink()
+
+    assert ws.run('merge_videos.py').returncode == 0
+
+    record = json.loads((merged_dir(ws) / 'merged_contents.json').read_text(encoding='utf-8'))
+    assert [len(sources) for sources in record.values()] == [1]

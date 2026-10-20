@@ -111,22 +111,32 @@ def merge_group(period_start, files, summary, record, split_idx=None, total_spli
         print(error_msg)
         summary.append(f"ERROR: {error_msg}")
         return False
-    # Record what the new file holds before it replaces the old one: if the run
-    # stops in between, the record lists more than the file holds, which only
-    # ever keeps a file that could have been deleted, never the other way round
+    # Record what the new file holds before it replaces the old one, together
+    # with what the old one held: whenever the run stops, the record lists at
+    # least what the file holds, which only ever keeps a file that could have
+    # been deleted, never the other way round
     previous = record.get(out_name)
-    record[out_name] = [source_name(f) for _, f in files]
+    sources = [source_name(f) for _, f in files]
+    record[out_name] = sorted(set(previous or []) | set(sources))
+
+    def fail(reason):
+        tmp_path.unlink(missing_ok=True)
+        error_msg = f"Failed to merge {out_name}: {reason}"
+        print(error_msg)
+        summary.append(f"ERROR: {error_msg}")
+        return False
+
     if not write_contents(out_dir, record, summary):
         if previous is None:
             record.pop(out_name)
         else:
             record[out_name] = previous
-        tmp_path.unlink(missing_ok=True)
-        error_msg = f"Failed to merge {out_name}: couldn't record its contents"
-        print(error_msg)
-        summary.append(f"ERROR: {error_msg}")
-        return False
-    tmp_path.replace(out_path)
+        return fail("couldn't record its contents")
+    try:
+        tmp_path.replace(out_path)
+    except OSError as e:   # e.g. the old file is open in a video player
+        return fail(f"couldn't replace the earlier file: {e}")
+    record[out_name] = sources   # written with the day's other changes
     success_msg = f"Merged {len(files)} files -> {out_path}"
     print(success_msg)
     summary.append(f"SUCCESS: {success_msg}")
