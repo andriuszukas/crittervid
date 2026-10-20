@@ -9,7 +9,11 @@ command lines the pipeline builds to simulate success and failure:
 - Decode to null (validate): exits 0 only if the file starts with b'OK'.
 
 If FAKE_FFMPEG_LOG is set, each command line is written as JSON to its own file
-named <FAKE_FFMPEG_LOG>.<pid>.<id>.
+named <FAKE_FFMPEG_LOG>.<pid>.<id>. A concat list is also copied to
+<FAKE_FFMPEG_LOG>-concat.<pid>.<id>, directives included (merge deletes its list).
+
+If FAKE_FFMPEG_FAIL_HWACCEL is set, any call with -hwaccel fails, like a machine
+whose GPU can't decode the file.
 """
 import json
 import os
@@ -67,6 +71,9 @@ def main():
         log = f"{os.environ['FAKE_FFMPEG_LOG']}.{os.getpid()}.{uuid.uuid4().hex}"
         with open(log, 'w', encoding='utf-8') as f:
             f.write(json.dumps(args))
+    if os.environ.get('FAKE_FFMPEG_FAIL_HWACCEL') and '-hwaccel' in args:
+        print('fake ffmpeg: hardware decoding failed', file=sys.stderr)
+        sys.exit(1)
     out_path = args[-1]
     in_path = args[args.index('-i') + 1]
 
@@ -76,6 +83,10 @@ def main():
 
     if '-f' in args and args[args.index('-f') + 1] == 'concat':
         data = b''
+        if os.environ.get('FAKE_FFMPEG_LOG'):
+            copy = f"{os.environ['FAKE_FFMPEG_LOG']}-concat.{os.getpid()}.{uuid.uuid4().hex}"
+            with open(in_path, encoding='utf-8') as filelist, open(copy, 'w', encoding='utf-8') as f:
+                f.write(filelist.read())
         with open(in_path, encoding='utf-8') as filelist:
             for line in filelist:
                 # Directives such as `inpoint 0` apply to the file before them

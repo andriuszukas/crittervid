@@ -44,6 +44,11 @@ class Workspace:
         log = Path(self.env['FAKE_FFMPEG_LOG'])
         return [json.loads(f.read_text(encoding='utf-8')) for f in sorted(log.parent.glob(log.name + '.*'))]
 
+    def concat_lists(self):
+        """Text of the concat lists the fake ffmpeg received (see ffmpeg_calls)."""
+        log = Path(self.env['FAKE_FFMPEG_LOG'])
+        return [f.read_text(encoding='utf-8') for f in sorted(log.parent.glob(log.name + '-concat.*'))]
+
     def run(self, script, *args):
         return subprocess.run(
             [sys.executable, script, *args],
