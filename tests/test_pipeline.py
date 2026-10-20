@@ -346,3 +346,28 @@ def test_merge_carries_on_when_an_old_file_is_open_elsewhere(ws):
     assert result.returncode == 0, result.stdout
     assert "WARNING: couldn't remove" in result.stdout
     assert (ws.root / 'output' / 'merged' / 'merge_summary.txt').is_file()
+
+
+def test_merge_keeps_older_files_whose_length_cant_be_checked(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+    old.write_bytes(b'not a video')   # ffprobe can't read it
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert "WARNING: kept 1 merged files" in result.stdout and "couldn't be checked" in result.stdout
+    assert old.exists()
+
+
+def test_process_all_repeats_merge_warnings_in_its_summary(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('process_all.py', '--accel', 'cpu').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+    old.write_bytes(b'not a video')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--splits-per-day', '2', '--no-validate')
+
+    summary = result.stdout[result.stdout.index('=== Summary ==='):]
+    assert 'Merge WARNING: kept 1 merged files' in summary

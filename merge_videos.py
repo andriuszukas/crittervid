@@ -1,3 +1,4 @@
+import functools
 import os
 
 from pathlib import Path
@@ -48,6 +49,7 @@ def group_files_by_day(files):
         groups[k].sort()
     return groups
 
+@functools.lru_cache(maxsize=None)   # each file is asked about while merging and again when tidying up
 def video_end(path):
     """When a file's video ends (its start time plus its length) in seconds, or
     None if ffprobe isn't available or can't read it. Usually the video starts
@@ -127,44 +129,50 @@ def video_length(path):
         return None
 
 
-def remove_stale_merges(day_dir, written, summary):
+def remove_stale_merges(day_dir, written, summary, day_files):
     """Delete merged files left in a day's folder by an earlier --splits-per-day
     setting: they repeat the footage this run just merged.
 
-    Only files with the exact names this step writes are considered, and only if
-    together they hold no more video than this run's files, so footage that's no
-    longer among the converted files (e.g. deleted to save space) is never lost.
-    A file that can't be deleted (e.g. open in a video player) is left with a
-    warning."""
+    Only files with the exact names this step writes are considered. Each older
+    set of parts is deleted only if it holds no more video than the day's
+    converted files do (their video ends added up, lead-ins included), so
+    footage whose converted files are gone (e.g. deleted to save space) is never
+    lost; if lengths can't be checked, the files are kept. A file that can't be
+    deleted (e.g. open in a video player) is left with a warning."""
     def warn(msg):
         print(f"WARNING: {msg}")
         summary.append(f"WARNING: {msg}")
 
-    stale = [f for f in sorted(day_dir.glob('merged_*.mp4'))
-             if f not in written and MERGED_NAME.fullmatch(f.name)]
-    if not stale:
+    sets = {}
+    for f in sorted(day_dir.glob('merged_*.mp4')):
+        m = MERGED_NAME.fullmatch(f.name)
+        if f not in written and m:
+            sets.setdefault(m.group(2), []).append(f)
+    if not sets:
         return
-    old_total = [video_length(f) for f in stale]
-    new_total = [video_length(f) for f in written]
-    if None in old_total or None in new_total:
-        warn(f"kept {len(stale)} merged files in {day_dir} from an earlier split setting: "
-             f"their length couldn't be checked (is ffprobe installed?)")
-        return
-    # Correct merges of the same footage match to within milliseconds
-    if sum(old_total) > sum(new_total) + 0.1:
-        warn(f"kept {len(stale)} merged files in {day_dir} from an earlier split setting: "
-             f"they hold {sum(old_total):.1f} s of video, more than the {sum(new_total):.1f} s merged now, "
-             f"so they may contain footage whose converted files are gone")
-        return
-    for old in stale:
-        try:
-            old.unlink()
-        except OSError as e:
-            warn(f"couldn't remove {old} (left from an earlier split setting): {e}")
+    ends = [video_end(f) for f in day_files]
+    for n, stale in sorted(sets.items(), key=lambda item: item[0] or ''):
+        setting = f'{n} per day' if n else 'one per day'
+        lengths = [video_length(f) for f in stale]
+        if None in lengths or None in ends:
+            warn(f"kept {len(stale)} merged files ({setting}) in {day_dir} from an earlier split setting: "
+                 f"their length couldn't be checked (is ffprobe installed?)")
             continue
-        msg = f"Removed {old} (left from an earlier split setting)"
-        print(msg)
-        summary.append(f"REMOVED: {msg}")
+        # A correct merge of the same footage never holds more than this
+        if sum(lengths) > sum(ends) + 0.1:
+            warn(f"kept {len(stale)} merged files ({setting}) in {day_dir} from an earlier split setting: "
+                 f"they hold {sum(lengths):.1f} s of video, more than the day's converted files "
+                 f"({sum(ends):.1f} s), so they may contain footage whose converted files are gone")
+            continue
+        for old in stale:
+            try:
+                old.unlink()
+            except OSError as e:
+                warn(f"couldn't remove {old} (left from an earlier split setting): {e}")
+                continue
+            msg = f"Removed {old} (left from an earlier split setting)"
+            print(msg)
+            summary.append(f"REMOVED: {msg}")
 
 def main():
     # Paths can contain characters the console's code page can't encode (e.g. the
@@ -205,7 +213,8 @@ def main():
                 failed += 1
                 day_failed = True
         if not day_failed:   # keep older files if this day's merge didn't complete
-            remove_stale_merges(MERGED_ROOT / day_start.strftime('%Y/%m/%d'), written, summary)
+            remove_stale_merges(MERGED_ROOT / day_start.strftime('%Y/%m/%d'), written, summary,
+                                [f for _, f in files])
     # Write summary report
     MERGED_ROOT.mkdir(parents=True, exist_ok=True)
     with open(SUMMARY_REPORT, 'w', encoding='utf-8') as f:

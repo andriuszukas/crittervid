@@ -224,6 +224,8 @@ def check_merged_days(converted, merged, probes):
                 elif part is not None:
                     problems += check_merged_part(f'merged {day} part {k} of {n}', part,
                                                   [probes[f] for f in chunk], probes)
+            problems += [f'WARNING: {part}: part {k} of {n} is not a part the merge writes'
+                         for k, part in sorted(set_parts.items()) if not 1 <= k <= n]
     for day in sorted(found):
         problems.append(f'WARNING: merged files for {day} have no matching converted files')
     return problems

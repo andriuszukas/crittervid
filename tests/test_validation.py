@@ -362,3 +362,31 @@ def test_validate_reports_merged_audio_longer_than_its_video(ws):
 
     assert result.returncode == 1
     assert any('audio is 1.00 s long but the video is 2.00 s long' in line for line in lines(result, 'ERROR'))
+
+
+def test_validate_splits_parts_like_the_merge_with_uneven_counts(ws):
+    # 3 events in 2 parts: the merge puts 2 in the first and 1 in the second
+    for i, content in enumerate((b'OKa', b'OKb', b'OKc')):
+        event_file(ws, f'{1790834400 + 600 * i}_0010.mp4', content)
+    merged_file(ws, b'OKOKaOKb', 'merged_20261001_0000_20261001_1200_part1of2.mp4')
+    merged_file(ws, b'OKOKc', 'merged_20261001_1200_20261002_0000_part2of2.mp4')
+
+    assert ws.run('validate_output.py').returncode == 0
+
+    # The same total split 1 + 2 doesn't match how the merge splits
+    merged_file(ws, b'OKOKa', 'merged_20261001_0000_20261001_1200_part1of2.mp4')
+    merged_file(ws, b'OKOKbOKc', 'merged_20261001_1200_20261002_0000_part2of2.mp4')
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 1
+    assert 'part 1 of 2 is 1.00 s long, but its 2 converted files add up to 2.00 s' in result.stdout
+
+
+def test_validate_warns_about_a_part_number_the_merge_doesnt_write(ws):
+    event_file(ws, '1790834400_0010.mp4', b'OKa')
+    merged_file(ws, b'OKOKa', 'merged_20261001_0000_20261001_1200_part1of2.mp4')
+    merged_file(ws, b'OKOKa', 'merged_20261001_1200_20261002_0000_part3of2.mp4')
+
+    result = ws.run('validate_output.py')
+
+    assert 'part 3 of 2 is not a part the merge writes' in result.stdout

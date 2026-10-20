@@ -99,7 +99,15 @@ def main():
 
     print("=== Summary ===")
     print(f"Conversion summary: {os.path.join(args.output_dir, 'conversion_summary.txt')}")
-    print(f"Merging summary: {os.path.join(args.output_dir, 'merged', 'merge_summary.txt')}")
+    merge_summary = os.path.join(args.output_dir, 'merged', 'merge_summary.txt')
+    print(f"Merging summary: {merge_summary}")
+    # Repeat the merge's warnings (e.g. older merged files it kept), which are
+    # otherwise easy to miss among the step's output
+    if not args.dry_run and os.path.isfile(merge_summary):
+        with open(merge_summary, encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('WARNING'):
+                    print(f"Merge {line.rstrip()}")
     if args.validate:
         print("Validation: see console output above")
     else:
