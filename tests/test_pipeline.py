@@ -1,5 +1,7 @@
 """Pipeline behaviour, using the fake ffmpeg from fake_ffmpeg.py."""
+import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -129,7 +131,72 @@ def test_validate_fails_on_unplayable_output(ws):
     result = ws.run('validate_output.py')
 
     assert result.returncode == 1
-    assert 'UNPLAYABLE' in result.stdout
+    assert 'unreadable' in result.stdout
+
+
+def event_file(ws, name, content):
+    path = ws.root / 'output' / '2026' / '10' / '01' / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return path
+
+
+def test_validate_reports_an_event_file_without_audio(ws):
+    event_file(ws, '1790834400_0010.mp4', b'OKNOAUDIO')
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 1
+    assert 'no audio track' in result.stdout
+
+
+def test_validate_reports_a_merged_day_shorter_than_its_events(ws):
+    # Two events that day, but the merged file only contains one of them
+    event_file(ws, '1790834400_0010.mp4', b'OKa')
+    event_file(ws, '1790835000_0010.mp4', b'OKb')
+    merged = ws.root / 'output' / 'merged' / '2026' / '10' / '01' / 'merged_20261001_0000_20261002_0000_part1of1.mp4'
+    merged.parent.mkdir(parents=True)
+    merged.write_bytes(b'OKOKa')
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 1
+    assert 'merged 2026/10/01 part 1 of 1 is 1.00 s long, but its 2 converted files add up to 2.00 s' in result.stdout
+
+
+def test_validate_passes_a_complete_pipeline_run_and_checks_merged_days(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 0, result.stdout
+    assert 'All output videos passed the checks.' in result.stdout
+    assert 'WARNING' not in result.stdout
+
+
+def test_validate_warns_about_unexpected_names(ws):
+    event_file(ws, '1790834400_0010.mp4', b'OKa')
+    event_file(ws, 'holiday video.mp4', b'OKb')
+
+    result = ws.run('validate_output.py')
+
+    assert result.returncode == 0
+    assert 'holiday video.mp4: not a name the converter writes' in result.stdout
+
+
+def test_deep_validation_decodes_each_file_once(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    ws.env['FAKE_FFMPEG_LOG'] = str(ws.root / 'ffmpeg_calls.jsonl')
+
+    assert ws.run('validate_output.py', '--deep').returncode == 0
+
+    decoded = [args[args.index('-i') + 1] for args in ws.ffmpeg_calls() if args[-1] == '-']
+    assert len(decoded) == len(set(decoded)) == 2   # the converted file and the merged file
 
 
 # --- Full pipeline ---
@@ -212,5 +279,220 @@ def test_process_all_output_is_in_order_when_piped(ws):
 
     assert (index('=== Step 1') < index('Found 1 .media')
             < index('=== Step 2') < index('Merged 1 files')
-            < index('=== Step 3') < index('Validating converted')
+            < index('=== Step 3') < index('Checking ')
             < index('=== Summary'))
+
+
+# --- Removing merged files left from an earlier split setting ---
+
+def merged_dir(ws):
+    [day] = {f.parent for f in ws.files('merged_*.mp4')}
+    return day
+
+
+def test_merge_only_removes_files_it_wrote_itself(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    day = merged_dir(ws)
+    (day / 'merged_my_best_bits.mp4').write_bytes(b'OKmine')
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert result.returncode == 0, result.stdout
+    assert sorted(f.name for f in day.glob('*.mp4')) == [
+        'merged_20251001_0000_20251001_1200_part1of2.mp4',
+        'merged_20251001_1200_20251002_0000_part2of2.mp4',
+        'merged_my_best_bits.mp4']
+
+
+def test_merge_keeps_older_files_holding_more_footage(ws):
+    # The converted files of one event were deleted to save space; the earlier
+    # merged file is now the only copy of that footage
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    ws.converted('0002.media').unlink()
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert 'WARNING: kept 1 merged files' in result.stdout and 'are gone' in result.stdout
+    assert len(list(merged_dir(ws).glob('merged_*_part1of1.mp4'))) == 1
+
+
+def test_merge_keeps_older_files_when_an_event_was_replaced(ws):
+    # Same number of files (and so the same total length) as before, but one
+    # event's converted file is gone: the old merged file is its only copy
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    gone = ws.converted('0002.media')
+    gone.rename(gone.with_name('1759300000_0001_0003.mp4'))
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert result.returncode == 0, result.stdout
+    assert 'WARNING: kept 1 merged files' in result.stdout and gone.name in result.stdout
+    assert len(list(merged_dir(ws).glob('merged_*_part1of1.mp4'))) == 1
+
+
+def test_merge_records_what_each_merged_file_holds(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py', '--splits-per-day', '2').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+
+    day = merged_dir(ws)
+    record = json.loads((day / 'merged_contents.json').read_text(encoding='utf-8'))
+    out = ws.root / 'output'
+    assert record == {f.name: sorted(Path(os.path.relpath(c, out)).as_posix()
+                                     for c in (ws.converted('0001.media'), ws.converted('0002.media')))
+                      for f in day.glob('merged_*.mp4')}
+    assert len(record) == 1   # the parts of the 2-per-day set were removed and forgotten
+
+
+def test_merge_keeps_older_files_when_this_merge_failed(ws):
+    # The old file holds no more footage than the new parts would, so only the
+    # failed merge is a reason to keep it
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    ws.converted('0002.media').write_bytes(b'BAD')   # the stand-in can't join this
+
+    assert ws.run('merge_videos.py', '--splits-per-day', '2').returncode == 1
+
+    assert len(list(merged_dir(ws).glob('merged_*_part1of1.mp4'))) == 1
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='only Windows refuses to delete an open file')
+def test_merge_carries_on_when_an_old_file_is_open_elsewhere(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+
+    with open(old, 'rb'):   # e.g. still open in a video player
+        result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert result.returncode == 0, result.stdout
+    assert "WARNING: couldn't remove" in result.stdout
+    assert (ws.root / 'output' / 'merged' / 'merge_summary.txt').is_file()
+
+
+def test_merge_keeps_older_files_it_has_no_record_of(ws):
+    # Made by an earlier version, which didn't record what each file holds
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+    (old.parent / 'merged_contents.json').unlink()
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert "WARNING: kept 1 merged files" in result.stdout and "didn't record" in result.stdout
+    assert old.exists()
+
+
+@pytest.mark.parametrize('record', ['not json', '[]', '{"%s": 5}', '{"%s": []}'])
+def test_merge_keeps_older_files_when_its_record_is_damaged(ws, record):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+    (old.parent / 'merged_contents.json').write_text(record.replace('%s', old.name), encoding='utf-8')
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert result.returncode == 0, result.stdout
+    assert "WARNING: kept 1 merged files" in result.stdout
+    assert old.exists()
+
+
+def test_process_all_repeats_merge_warnings_in_its_summary(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('process_all.py', '--accel', 'cpu').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+    (old.parent / 'merged_contents.json').unlink()
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--splits-per-day', '2', '--no-validate')
+
+    summary = result.stdout[result.stdout.index('=== Summary ==='):]
+    assert 'Merge WARNING: kept 1 merged files' in summary
+
+
+def test_process_all_doesnt_repeat_warnings_from_an_earlier_merge(ws):
+    ws.add_media('0001.media', b'good')
+    report = ws.root / 'output' / 'merged' / 'merge_summary.txt'
+    report.parent.mkdir(parents=True)
+    report.write_text('WARNING: from an earlier run\n', encoding='utf-8')
+    # A file where the day's merged folder should be stops the merge before it
+    # writes its report
+    (report.parent / '2025' / '10').mkdir(parents=True)
+    (report.parent / '2025' / '10' / '01').write_bytes(b'')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--no-validate')
+
+    assert result.returncode == 1
+    assert 'from an earlier run' not in result.stdout
+
+
+def test_merge_records_a_file_before_replacing_it(ws):
+    # If the run stops after the record is written but before the new file
+    # replaces the old one, the record must list at least what the file holds
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    day = merged_dir(ws)
+    [old] = day.glob('merged_*.mp4')
+    before = old.read_bytes()
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    record = day / 'merged_contents.json'
+    record.unlink()
+    record.mkdir()   # can't be written now
+
+    result = ws.run('merge_videos.py')
+
+    assert result.returncode == 1
+    assert old.read_bytes() == before   # not replaced by a file the record doesn't describe
+    assert "couldn't record its contents" in result.stdout
+    assert ws.files('*.part') == []
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='only Windows refuses to replace an open file')
+def test_merge_still_knows_what_a_file_it_couldnt_replace_holds(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [old] = merged_dir(ws).glob('merged_*.mp4')
+    before = old.read_bytes()
+    ws.converted('0001.media').unlink()   # its footage is now only in the old file
+
+    with open(old, 'rb'):   # e.g. still open in a video player
+        result = ws.run('merge_videos.py')
+    assert result.returncode == 1
+    assert "couldn't replace the earlier file" in result.stdout
+    assert old.read_bytes() == before
+    assert ws.files('*.part') == []
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+    assert 'WARNING: kept 1 merged files' in result.stdout and 'are gone' in result.stdout
+    assert old.read_bytes() == before
+
+
+def test_merge_forgets_events_a_replaced_file_no_longer_holds(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    ws.converted('0001.media').unlink()
+
+    assert ws.run('merge_videos.py').returncode == 0
+
+    record = json.loads((merged_dir(ws) / 'merged_contents.json').read_text(encoding='utf-8'))
+    assert [len(sources) for sources in record.values()] == [1]

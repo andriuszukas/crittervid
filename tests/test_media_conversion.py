@@ -264,3 +264,34 @@ def test_merging_many_events_does_not_drift(real_ws):
     s = streams(merged)
     assert float(s['video']['duration']) == pytest.approx(copies * one, abs=0.02)
     assert float(s['audio']['duration']) == pytest.approx(float(s['video']['duration']), abs=0.13)
+
+
+def write_day_of_events(ws, count=5):
+    for i in range(count):
+        write_event(ws.root / 'input' / 'DCIM', utc(2026, 10, 1, 6 + i, 0), 10)
+
+
+def test_validation_passes_a_merged_day_of_events(real_ws):
+    write_day_of_events(real_ws)
+    convert(real_ws)
+    assert real_ws.run('merge_videos.py').returncode == 0
+
+    result = real_ws.run('validate_output.py')
+
+    assert result.returncode == 0, result.stdout
+    assert 'WARNING' not in result.stdout
+
+
+def test_validation_fails_a_merged_day_missing_an_event(real_ws):
+    write_day_of_events(real_ws)
+    convert(real_ws)
+    left_out = sorted(real_ws.root.joinpath('output').rglob('*.mp4'))[2]
+    aside = left_out.with_suffix('.aside')
+    left_out.rename(aside)
+    assert real_ws.run('merge_videos.py').returncode == 0
+    aside.rename(left_out)
+
+    result = real_ws.run('validate_output.py')
+
+    assert result.returncode == 1
+    assert 'converted files add up to' in result.stdout

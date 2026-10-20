@@ -74,7 +74,7 @@ def test_card_converts_merges_and_validates(card_ws):
     result = run(card_ws)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert 'All output videos are correctly named and playable.' in result.stdout
+    assert 'All output videos passed the checks.' in result.stdout
     assert 'WARNING' not in result.stdout
     assert card_ws.files('*.part') == []
 

@@ -47,7 +47,7 @@ if exist ffmpeg.exe (
     echo FFmpeg was bundled from ffmpeg.exe in the project folder.
 ) else (
     echo NOTE: FFmpeg was not bundled. Users need FFmpeg on their PATH, or
-    echo copy ffmpeg.exe into dist\CritterVid\_internal\ before zipping.
+    echo copy ffmpeg.exe and ffprobe.exe into dist\CritterVid\_internal\ before zipping.
 )
 echo.
 pause

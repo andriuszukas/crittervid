@@ -39,9 +39,15 @@ class Workspace:
         return sorted((self.root / 'output').rglob(pattern))
 
     def ffmpeg_calls(self):
-        """Command lines the fake ffmpeg received, when FAKE_FFMPEG_LOG is set."""
+        """Command lines the fake ffmpeg received, when FAKE_FFMPEG_LOG is set
+        (it writes one file per call, named after the log path)."""
         log = Path(self.env['FAKE_FFMPEG_LOG'])
-        return [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines()]
+        return [json.loads(f.read_text(encoding='utf-8')) for f in sorted(log.parent.glob(log.name + '.*'))]
+
+    def concat_lists(self):
+        """Text of the concat lists the fake ffmpeg received (see ffmpeg_calls)."""
+        log = Path(self.env['FAKE_FFMPEG_LOG'])
+        return [f.read_text(encoding='utf-8') for f in sorted(log.parent.glob(log.name + '-concat.*'))]
 
     def run(self, script, *args):
         return subprocess.run(
@@ -72,16 +78,18 @@ def make_workspace(tmp_path, path_prefix=None):
 
 @pytest.fixture
 def fake_ffmpeg_dir(tmp_path):
-    """A directory holding an `ffmpeg` command that runs tests/fake_ffmpeg.py."""
+    """A directory holding `ffmpeg` and `ffprobe` commands that run
+    tests/fake_ffmpeg.py and tests/fake_ffprobe.py."""
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
-    fake = TESTS_DIR / 'fake_ffmpeg.py'
-    if os.name == 'nt':
-        (bin_dir / 'ffmpeg.bat').write_text(f'@"{sys.executable}" "{fake}" %*\r\n')
-    else:
-        launcher = bin_dir / 'ffmpeg'
-        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n')
-        launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    for tool in ('ffmpeg', 'ffprobe'):
+        fake = TESTS_DIR / f'fake_{tool}.py'
+        if os.name == 'nt':
+            (bin_dir / f'{tool}.bat').write_text(f'@"{sys.executable}" "{fake}" %*\r\n')
+        else:
+            launcher = bin_dir / tool
+            launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n')
+            launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
     return bin_dir
 
 

@@ -16,8 +16,14 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
 - **Hardware acceleration** — only used for `.media` files that aren't in the cameras' usual
   record format, which FFmpeg has to re-encode: NVIDIA (CUDA), Intel (QSV), AMD (AMF), or CPU.
   Auto-detection can't detect NVIDIA on Python 3.12+ ([#2](https://github.com/andriuszukas/crittervid/issues/2)), so choose your GPU explicitly.
-- **Merge** converted clips into one or more files per day (`--splits-per-day`).
-- **Validate** every output by re-decoding it to confirm it plays.
+- **Merge** converted clips into one or more files per day (`--splits-per-day`). Merging a day
+  again with a different number replaces that day's earlier merged files, unless they hold
+  footage the new ones don't (e.g. after deleting converted files to save space). Each day's
+  `merged_contents.json` records which events each merged file holds; merged files made by
+  earlier versions have no record, so they're kept and you're told about them.
+- **Validate** the output in seconds: every event file has video and audio of matching length,
+  each merged day is as long as its events, and every file has an expected name. `--deep-validate`
+  also decodes everything in full (about as long as the footage).
 - **Robust** — skips already-converted files, retries failures, handles Ctrl+C gracefully, and writes summary reports.
 - **GUI or CLI** — a Streamlit web UI, or run each stage directly from the terminal.
 
@@ -66,7 +72,7 @@ python process_all.py --input-dir input/DCIM --output-dir output --accel cuda
 # Individual stages
 python convert_media.py --input-dir input/DCIM --output-dir output --accel cuda
 python merge_videos.py --output-dir output --splits-per-day 2
-python validate_output.py --output-dir output --accel cuda
+python validate_output.py --output-dir output            # add --deep to decode every file
 
 # Retry only files that failed a previous run
 python convert_media.py --retry-failed --max-retries 5
@@ -76,7 +82,7 @@ python process_all.py --dry-run
 ```
 
 Key options: `--accel {cpu,cuda,qsv,vaapi,amf,auto}`, `--workers N`, `--copy`
-(stream-copy without re-encoding), `--splits-per-day N`, `--no-validate`.
+(stream-copy without re-encoding), `--splits-per-day N`, `--no-validate`, `--deep-validate`.
 
 ## Output
 
@@ -84,6 +90,7 @@ Key options: `--accel {cpu,cuda,qsv,vaapi,amf,auto}`, `--workers N`, `--copy`
 output/
   YYYY/MM/DD/<timestamp>_<duration>.mp4    # one file per recorded event
   merged/YYYY/MM/DD/merged_*.mp4           # merged daily clips
+  merged/YYYY/MM/DD/merged_contents.json    # which events each merged clip holds
   conversion_summary.txt                   # per-run reports
   merged/merge_summary.txt
 ```
