@@ -397,7 +397,7 @@ def test_merge_keeps_older_files_it_has_no_record_of(ws):
     assert old.exists()
 
 
-@pytest.mark.parametrize('record', ['not json', '[]', '{"%s": 5}'])
+@pytest.mark.parametrize('record', ['not json', '[]', '{"%s": 5}', '{"%s": []}'])
 def test_merge_keeps_older_files_when_its_record_is_damaged(ws, record):
     ws.add_media('0001.media', b'good')
     assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
@@ -438,3 +438,26 @@ def test_process_all_doesnt_repeat_warnings_from_an_earlier_merge(ws):
 
     assert result.returncode == 1
     assert 'from an earlier run' not in result.stdout
+
+
+def test_merge_records_a_file_before_replacing_it(ws):
+    # If the run stops after the record is written but before the new file
+    # replaces the old one, the record must list at least what the file holds
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    day = merged_dir(ws)
+    [old] = day.glob('merged_*.mp4')
+    before = old.read_bytes()
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    record = day / 'merged_contents.json'
+    record.unlink()
+    record.mkdir()   # can't be written now
+
+    result = ws.run('merge_videos.py')
+
+    assert result.returncode == 1
+    assert old.read_bytes() == before   # not replaced by a file the record doesn't describe
+    assert "couldn't record its contents" in result.stdout
+    assert ws.files('*.part') == []

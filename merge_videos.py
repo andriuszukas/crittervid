@@ -69,7 +69,7 @@ def video_end(path):
         return None
 
 
-def merge_group(period_start, files, summary, split_idx=None, total_splits=None):
+def merge_group(period_start, files, summary, record, split_idx=None, total_splits=None):
     out_dir = MERGED_ROOT / period_start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
     start_str = period_start.strftime('%Y%m%d_%H%M')
@@ -111,6 +111,21 @@ def merge_group(period_start, files, summary, split_idx=None, total_splits=None)
         print(error_msg)
         summary.append(f"ERROR: {error_msg}")
         return False
+    # Record what the new file holds before it replaces the old one: if the run
+    # stops in between, the record lists more than the file holds, which only
+    # ever keeps a file that could have been deleted, never the other way round
+    previous = record.get(out_name)
+    record[out_name] = [source_name(f) for _, f in files]
+    if not write_contents(out_dir, record, summary):
+        if previous is None:
+            record.pop(out_name)
+        else:
+            record[out_name] = previous
+        tmp_path.unlink(missing_ok=True)
+        error_msg = f"Failed to merge {out_name}: couldn't record its contents"
+        print(error_msg)
+        summary.append(f"ERROR: {error_msg}")
+        return False
     tmp_path.replace(out_path)
     success_msg = f"Merged {len(files)} files -> {out_path}"
     print(success_msg)
@@ -135,7 +150,7 @@ def read_contents(day_dir):
         return {}
     # Leave out anything malformed, so those files count as unrecorded and are kept
     return {name: sources for name, sources in record.items()
-            if isinstance(sources, list) and all(isinstance(s, str) for s in sources)}
+            if isinstance(sources, list) and sources and all(isinstance(s, str) for s in sources)}
 
 
 def write_contents(day_dir, record, summary):
@@ -144,13 +159,16 @@ def write_contents(day_dir, record, summary):
     try:
         if not record:
             path.unlink(missing_ok=True)
-            return
+            return True
         tmp.write_text(json.dumps(record, indent=1, sort_keys=True), encoding='utf-8')
         tmp.replace(path)
+        return True
     except OSError as e:
+        tmp.unlink(missing_ok=True)
         msg = f"couldn't write {path}: {e}"
         print(f"WARNING: {msg}")
         summary.append(f"WARNING: {msg}")
+        return False
 
 
 def remove_stale_merges(day_dir, written, summary, day_files, record):
@@ -233,10 +251,9 @@ def main():
             if not split_files:
                 continue
             split_period_start = day_start + timedelta(hours=(i * 24 // n))
-            out_path = merge_group(split_period_start, split_files, summary, split_idx=i, total_splits=n)
+            out_path = merge_group(split_period_start, split_files, summary, record, split_idx=i, total_splits=n)
             if out_path:
                 written.add(out_path)
-                record[out_path.name] = [source_name(f) for _, f in split_files]
             else:
                 failed += 1
                 day_failed = True
