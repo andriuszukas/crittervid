@@ -18,7 +18,7 @@ def test_failed_conversion_leaves_no_output(ws):
     assert not ws.converted('0002.media').exists()
     assert ws.files('*.part') == []
     failed_list = (ws.root / 'output' / 'conversion_failed.txt').read_text()
-    assert str(bad.relative_to(ws.root)) in failed_list
+    assert str(bad) in failed_list
     assert result.returncode == 1
 
 
