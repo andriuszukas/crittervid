@@ -29,6 +29,20 @@ AUDIO_JITTER_US = 20_000
 NAL_IDR, NAL_SPS, NAL_PPS = 5, 7, 8
 
 
+# Event folders are named <start time>_<length>, the start in Unix time. A camera
+# whose clock wasn't set counts from 0 after power-up, so its events seem to be
+# from 1970 (or, with a time zone west of UTC, from 2106 once the date wraps).
+# Times outside this range can't be real recording times.
+CLOCK_SET_FROM = 946_684_800     # 2000-01-01 UTC
+CLOCK_SET_UNTIL = 4_102_444_800  # 2100-01-01 UTC
+
+
+def clock_was_set(timestamp):
+    """Whether an event's start time (Unix seconds) can be a real time, rather
+    than one counted by a camera whose clock wasn't set (#73)."""
+    return CLOCK_SET_FROM <= timestamp < CLOCK_SET_UNTIL
+
+
 class MediaFormatError(ValueError):
     """The data isn't a .media record stream."""
 

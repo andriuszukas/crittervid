@@ -496,3 +496,33 @@ def test_merge_forgets_events_a_replaced_file_no_longer_holds(ws):
 
     record = json.loads((merged_dir(ws) / 'merged_contents.json').read_text(encoding='utf-8'))
     assert [len(sources) for sources in record.values()] == [1]
+
+
+
+# --- Events recorded before the camera's clock was set (#73) ---
+
+def test_events_recorded_before_the_clock_was_set_are_converted_but_not_merged(ws):
+    ws.add_media('0001.media', b'good')
+    unset = ['1970/01/01/0000010800_0602', '2106/02/07/0000000001_0602']
+    for folder in unset:
+        path = ws.root / 'input' / 'DCIM' / folder / '0000.media'
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'unset clock')
+
+    result = ws.run('convert_media.py', '--accel', 'cpu')
+
+    assert result.returncode == 0, result.stdout
+    warned = [line for line in result.stdout.splitlines() if "before the camera's clock was set" in line]
+    assert len(warned) == 2
+    for folder in unset:   # the footage is kept, in the card's own folders
+        assert ws.files(f'{Path(folder).name}_0000.mp4')
+
+    result = ws.run('merge_videos.py')
+
+    assert result.returncode == 0, result.stdout
+    assert "WARNING: 2 converted files weren't merged" in result.stdout
+    merged = ws.root / 'output' / 'merged'
+    assert [f.relative_to(merged).parts[0] for f in ws.files('merged_*.mp4')] == ['2025']
+
+    result = ws.run('validate_output.py')
+    assert result.returncode == 0, result.stdout

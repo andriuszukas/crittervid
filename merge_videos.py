@@ -8,6 +8,7 @@ import re
 import argparse
 import sys
 from ffmpeg_helper import get_ffmpeg_path, get_ffprobe_path
+import media_format
 
 OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
@@ -32,6 +33,14 @@ def find_mp4_files(root):
             if filename.endswith('.mp4'):
                 yield Path(dirpath) / filename
 
+def unset_clock_files(files):
+    """The converted files of events recorded before the camera's clock was set
+    (#73). Their times count from the camera's power-up, not real days, so they
+    aren't merged."""
+    return [f for f in files if (m := FILENAME_RE.search(str(f)))
+            and not media_format.clock_was_set(int(m.group(1)))]
+
+
 # Group files by day
 def group_files_by_day(files):
     # An event converted as one file (<event>.mp4) supersedes per-segment files left
@@ -40,7 +49,7 @@ def group_files_by_day(files):
     groups = {}
     for f in files:
         m = FILENAME_RE.search(str(f))
-        if not m or f.parent.name in events:
+        if not m or f.parent.name in events or not media_format.clock_was_set(int(m.group(1))):
             continue
         timestamp = m.group(1)
         dt = datetime.fromtimestamp(int(timestamp))
@@ -249,6 +258,12 @@ def main():
     groups = group_files_by_day(mp4_files)
     summary = []
     failed = 0
+    unset = sorted(unset_clock_files(mp4_files))
+    if unset:
+        msg = (f"{len(unset)} converted files weren't merged: they were recorded before the camera's "
+               f"clock was set, so their real time is unknown (e.g. {unset[0]})")
+        print(f"WARNING: {msg}")
+        summary.append(f"WARNING: {msg}")
     for day_start, files in groups.items():
         n = max(1, args.splits_per_day)
         total = len(files)

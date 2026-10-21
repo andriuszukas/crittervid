@@ -268,3 +268,12 @@ def test_a_keyframe_starts_at_its_parameter_sets():
     assert mf.from_parameter_sets(KEY) == KEY
     assert mf.from_parameter_sets(b'\x41old\x00\x00\x01\x67sps') == b'\x00\x00\x01\x67sps'   # 3-byte start code
     assert mf.from_parameter_sets(P) == P   # nothing to trim without parameter sets
+
+
+def test_times_counted_by_a_camera_whose_clock_was_not_set_are_recognised():
+    assert not mf.clock_was_set(1)            # 2106/ folders: a tiny time, wrapped date
+    assert not mf.clock_was_set(10_800)       # 1970/ folders
+    assert not mf.clock_was_set(mf.CLOCK_SET_FROM - 1)
+    assert mf.clock_was_set(mf.CLOCK_SET_FROM)
+    assert mf.clock_was_set(1_759_300_000)
+    assert not mf.clock_was_set(mf.CLOCK_SET_UNTIL)

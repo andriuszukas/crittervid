@@ -100,6 +100,10 @@ folders in which no file is in the cameras' record format are converted one segm
 instead, into `YYYY/MM/DD/<timestamp>_<duration>/` folders. An event file isn't redone if more
 segments are added to its folder later; delete it to convert the event again.
 
+Events recorded before the camera's clock was set show up on the card in `1970/` or `2106/`
+folders. They're converted into the same folders, but their real time is unknown, so they
+aren't merged into days; the reports list them.
+
 > **Upgrading from an earlier version?** Earlier versions converted `.media` files at the wrong
 > speed (about 25% too slow) and without sound
 > ([details](docs/decisions/0001-media-format.md)). Convert your cards again, ideally into a new
