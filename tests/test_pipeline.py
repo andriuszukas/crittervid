@@ -534,3 +534,19 @@ def test_events_recorded_before_the_clock_was_set_are_converted_but_not_merged(w
     result = ws.run('validate_output.py')
     assert result.returncode == 0, result.stdout
     assert 'an earlier version made' in result.stdout and 'no matching converted files' not in result.stdout
+
+
+def test_merge_and_validate_ignore_folders_that_arent_days(ws):
+    ws.add_media('0001.media', b'good')
+    merged = ws.root / 'output' / 'merged'
+    (merged / 'notes' / 'x' / 'y').mkdir(parents=True)
+    (merged / '2025.bak' / '01' / '01').mkdir(parents=True)
+    (merged / 'merged_20251001_0000_20251002_0000.mp4').write_bytes(b'OKOK')   # not in a day folder
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+
+    result = ws.run('merge_videos.py')
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    result = ws.run('validate_output.py')
+    assert 'Traceback' not in result.stdout + result.stderr
+    assert 'no matching converted files' in result.stdout   # the stray file, as before

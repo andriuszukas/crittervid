@@ -43,8 +43,9 @@ def unset_clock_files(files):
 
 def unset_clock_day(day):
     """Whether a day folder ('YYYY/MM/DD') has a date only a camera whose clock
-    wasn't set gives its events, such as 1970/01/01 or 2106/02/07 (#73)."""
-    return not 2000 <= int(day[:4]) < 2100
+    wasn't set gives its events, such as 1970/01/01 or 2106/02/07 (#73). Any
+    other folder name isn't a day, so it's False."""
+    return bool(re.fullmatch(r'\d{4}/\d{2}/\d{2}', day)) and not 2000 <= int(day[:4]) < 2100
 
 
 UNSET_CLOCK_MERGES = ("holds merged files an earlier version made from events recorded before the "
