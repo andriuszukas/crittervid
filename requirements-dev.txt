@@ -1,0 +1,8 @@
+# For building and testing, on top of what the app needs
+-r requirements.txt
+
+# Build tool for the standalone app
+pyinstaller==6.11.1
+
+# Tests
+pytest==9.1.1

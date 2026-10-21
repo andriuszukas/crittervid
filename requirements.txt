@@ -1,12 +1,9 @@
-# Core dependencies
+# What the app needs to run. The command-line scripts need only the standard
+# library; requirements-dev.txt adds the build and test tools.
+
+# GUI
 streamlit==1.50.0
 
 # GPU detection (optional, for auto-detection of hardware acceleration)
 GPUtil==1.4.0
-WMI==1.5.1
-
-# Build tool for standalone executable
-pyinstaller==6.11.1
-
-# Tests
-pytest==9.1.1
+WMI==1.5.1; sys_platform == "win32"

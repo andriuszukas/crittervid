@@ -33,21 +33,20 @@ The app only accepts connections from your own computer, and needs no internet c
 
 ### Prerequisites
 
-1. **Python 3.10 to 3.13.** Python 3.14 isn't supported yet, because the pinned PyInstaller in `requirements.txt` doesn't install on it.
+1. **Python 3.10 to 3.13.** Python 3.14 isn't supported yet, because the pinned PyInstaller in `requirements-dev.txt` doesn't install on it.
    ```bash
    python --version
    ```
-2. **Python packages:**
-   - On **Windows**:
-     ```bash
-     pip install -r requirements.txt
-     ```
-     This installs Streamlit (the GUI), GPUtil and WMI (used by Auto GPU detection), PyInstaller (for building) and pytest (for tests).
-   - On **macOS and Linux**, `requirements.txt` doesn't install yet because WMI is Windows-only ([#6](https://github.com/andriuszukas/crittervid/issues/6)). Install Streamlit for the GUI instead:
-     ```bash
-     pip install streamlit==1.50.0
-     ```
-     The command-line scripts need no packages at all.
+2. **Python packages**, on any system:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   This installs Streamlit (the GUI) and GPUtil, plus WMI on Windows (both used by Auto GPU detection). The command-line scripts need no packages at all.
+
+   To build the app or run the tests, install `requirements-dev.txt` instead. It adds PyInstaller and pytest:
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
 3. **FFmpeg**, on `PATH` or as `ffmpeg.exe` (Windows) / `ffmpeg` (macOS, Linux) in the project folder. Download from https://ffmpeg.org/download.html.
 
 ### Starting the GUI
@@ -80,7 +79,7 @@ python convert_media.py --retry-failed --max-retries 5
 
 Builds are Windows-only for now; builds for macOS and Linux are planned ([#46](https://github.com/andriuszukas/crittervid/issues/46)).
 
-1. Set up Python 3.10 to 3.13 and install `requirements.txt`, as in [Running from source](#running-from-source).
+1. Set up Python 3.10 to 3.13 and install `requirements-dev.txt`, as in [Running from source](#running-from-source).
 2. **Optional:** put `ffmpeg.exe` and `ffprobe.exe` in the project folder to bundle them, so users don't have to install FFmpeg. Without them, the build still works and prints a note that FFmpeg wasn't bundled. ffprobe is used to check outputs and to join files exactly; without it, validation falls back to slow full decoding.
 3. Run `build.bat`.
 4. The app is in `dist\CritterVid\`, with `CritterVid.exe` as the main program. It's about 190–210 MB, plus the size of `ffmpeg.exe` if bundled.

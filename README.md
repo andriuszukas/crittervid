@@ -32,11 +32,11 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
 - Python 3.10 to 3.13 (3.14 isn't supported yet: the pinned PyInstaller doesn't install on it)
 - [FFmpeg](https://ffmpeg.org/download.html) — either on your `PATH`, or place `ffmpeg.exe` (Windows) / `ffmpeg` (macOS, Linux) in the project folder.
   > **Note:** FFmpeg is intentionally **not** committed to this repo (it exceeds GitHub's file-size limit). Download it separately.
-- Python dependencies, on Windows:
+- Python dependencies, on any system:
   ```bash
   pip install -r requirements.txt
   ```
-  On macOS and Linux, `requirements.txt` doesn't install yet ([#6](https://github.com/andriuszukas/crittervid/issues/6)); run `pip install streamlit==1.50.0` for the GUI. The command-line scripts need no packages.
+  This installs the GUI and the optional GPU detection. The command-line scripts need no packages. To build the app or run the tests, install `requirements-dev.txt` instead.
 
 ## Input layout
 
