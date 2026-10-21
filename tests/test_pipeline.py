@@ -508,6 +508,7 @@ def test_events_recorded_before_the_clock_was_set_are_converted_but_not_merged(w
         path = ws.root / 'input' / 'DCIM' / folder / '0000.media'
         path.parent.mkdir(parents=True)
         path.write_bytes(b'unset clock')
+    (path.parent / '0013.media').write_bytes(b'more')   # two files for one event
 
     result = ws.run('convert_media.py', '--accel', 'cpu')
 
@@ -517,12 +518,19 @@ def test_events_recorded_before_the_clock_was_set_are_converted_but_not_merged(w
     for folder in unset:   # the footage is kept, in the card's own folders
         assert ws.files(f'{Path(folder).name}_0000.mp4')
 
+    # A merged day an earlier version made of them
+    merged = ws.root / 'output' / 'merged'
+    old = merged / '1970' / '01' / '01' / 'merged_19700101_0000_19700102_0000_part1of1.mp4'
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b'OKOKOK')
+
     result = ws.run('merge_videos.py')
 
     assert result.returncode == 0, result.stdout
-    assert "WARNING: 2 converted files weren't merged" in result.stdout
-    merged = ws.root / 'output' / 'merged'
-    assert [f.relative_to(merged).parts[0] for f in ws.files('merged_*.mp4')] == ['2025']
+    assert "WARNING: 2 events weren't merged" in result.stdout
+    assert [f.relative_to(merged).parts[0] for f in ws.files('merged_*.mp4')] == ['1970', '2025']
+    assert 'an earlier version made' in result.stdout and old.exists()   # pointed out, not deleted
 
     result = ws.run('validate_output.py')
     assert result.returncode == 0, result.stdout
+    assert 'an earlier version made' in result.stdout and 'no matching converted files' not in result.stdout
