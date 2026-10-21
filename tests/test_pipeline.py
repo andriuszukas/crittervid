@@ -556,37 +556,73 @@ def test_merge_and_validate_ignore_folders_that_arent_days(ws):
     assert 'no matching converted files' in result.stdout   # the stray file, as before
 
 
-
 # --- Stopping a conversion (#9) ---
+
+def start_slow_run(ws, script, *args, segments=10):
+    """Start `script` on `segments` segments that each take the fake FFmpeg 3 s,
+    and return the process once the first is being written."""
+    for i in range(segments):
+        ws.add_media(f'{i:04d}.media', b'good')
+    env = dict(ws.env, FAKE_FFMPEG_SLEEP='3', FAKE_FFMPEG_LOG=str(ws.root / 'calls'))
+    proc = subprocess.Popen([sys.executable, script, '--accel', 'cpu', '--workers', '1', *args],
+                            cwd=ws.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            encoding='utf-8', errors='replace',
+                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0)
+    deadline = time.monotonic() + 30
+    while not ws.files('*.part') and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return proc
+
+
+def interrupt(proc):
+    """Ctrl+C. On Windows: Ctrl+Break to the process group, as a console sends
+    Ctrl+C to everything in it (this also ends the fake FFmpeg, whose .bat
+    launcher terminate() wouldn't reach). Elsewhere: SIGINT to the process only,
+    so the converter has to end FFmpeg itself."""
+    os.kill(proc.pid, signal.CTRL_BREAK_EVENT if os.name == 'nt' else signal.SIGINT)
+    started = time.monotonic()
+    output, _ = proc.communicate(timeout=60)
+    return output, time.monotonic() - started
+
 
 def test_ctrl_c_stops_the_conversion_promptly(ws):
     # Ten segments of 3 s each, one at a time: 30 s if Ctrl+C didn't stop it
-    for i in range(10):
-        ws.add_media(f'{i:04d}.media', b'good')
-    env = dict(ws.env, FAKE_FFMPEG_SLEEP='3', FAKE_FFMPEG_LOG=str(ws.root / 'calls'))
-    windows = os.name == 'nt'
-    proc = subprocess.Popen([sys.executable, 'convert_media.py', '--accel', 'cpu', '--workers', '1'],
-                            cwd=ws.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            encoding='utf-8', errors='replace',
-                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0)
-    deadline = time.monotonic() + 30
-    while not list(ws.root.glob('calls.*')) and time.monotonic() < deadline:   # FFmpeg has started
-        time.sleep(0.1)
-    time.sleep(0.5)
+    proc = start_slow_run(ws, 'convert_media.py')
 
-    started = time.monotonic()
-    # Windows: Ctrl+Break to the process group, as a console sends Ctrl+C to
-    # everything in it. Elsewhere: SIGINT to the converter only, so it has to
-    # end FFmpeg itself
-    os.kill(proc.pid, signal.CTRL_BREAK_EVENT if windows else signal.SIGINT)
-    output, _ = proc.communicate(timeout=30)
+    output, took = interrupt(proc)
 
-    assert time.monotonic() - started < 6, output
+    assert took < 10, output
     assert proc.returncode == 1, output
-    assert 'interrupted' in output
+    assert 'interrupted' in output and 'completed successfully' not in output
     assert len(list(ws.root.glob('calls.*'))) <= 2   # queued segments never started
     assert ws.files('*.part') == []
     assert len(ws.files('*.mp4')) < 10
     assert 'PROCESS INTERRUPTED' in (ws.root / 'output' / 'conversion_summary.txt').read_text(encoding='utf-8')
     # Nothing was listed as failed: the stopped segment is simply converted next time
     assert not (ws.root / 'output' / 'conversion_failed.txt').exists()
+
+
+def test_ctrl_c_keeps_the_list_of_files_still_to_retry(ws):
+    listed = ws.root / 'output' / 'conversion_failed.txt'
+    listed.parent.mkdir(parents=True)
+    still_to_do = str(ws.root / 'input' / 'DCIM' / '2025' / '10' / '01' / '1759300001_0001')
+    listed.write_text(still_to_do + '\n', encoding='utf-8')
+    proc = start_slow_run(ws, 'convert_media.py')
+
+    output, _ = interrupt(proc)
+
+    assert proc.returncode == 1, output
+    assert listed.read_text(encoding='utf-8').splitlines() == [still_to_do]
+
+
+def test_ctrl_c_stops_process_all_after_the_conversion_stops_cleanly(ws):
+    proc = start_slow_run(ws, 'process_all.py')
+
+    output, took = interrupt(proc)
+
+    assert took < 10, output
+    assert proc.returncode == 1, output
+    assert 'Stopped by user' in output and 'Traceback' not in output
+    assert '=== Step 2' not in output
+    assert ws.files('*.part') == []
+    assert 'PROCESS INTERRUPTED' in (ws.root / 'output' / 'conversion_summary.txt').read_text(encoding='utf-8')

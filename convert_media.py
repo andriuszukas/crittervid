@@ -44,7 +44,9 @@ def run_ffmpeg(cmd):
     finally:
         with _running_lock:
             _running.discard(proc)
-    if proc.returncode != 0 and STOP.is_set():
+    # A console's Ctrl+C reaches FFmpeg slightly before the run starts stopping,
+    # so give a failure a moment to turn out to be the stop
+    if proc.returncode != 0 and STOP.wait(1.0):
         raise Stopped
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
@@ -402,25 +404,37 @@ def main():
 
         current_failed = []
         executor = ThreadPoolExecutor(max_workers=args.workers)
+        futures, collected = [], set()
+
+        def collect(future):
+            result_summary, result_failed, success = future.result()
+            summary.extend(result_summary)
+            current_failed.extend(result_failed)
+            collected.add(future)
+
         try:
-            pending = {executor.submit(convert_event_parallel, (event_dir, segments, accel, args.copy))
-                       for event_dir, segments in group_by_event(media_files).items()}
+            futures = [executor.submit(convert_event_parallel, (event_dir, segments, accel, args.copy))
+                       for event_dir, segments in group_by_event(media_files).items()]
+            pending = set(futures)
             while pending:
                 # Wait in short steps: on Windows, Ctrl+C doesn't interrupt a wait
                 # without a timeout
                 done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
                 for future in done:
-                    result_summary, result_failed, success = future.result()
-                    summary.extend(result_summary)
-                    current_failed.extend(result_failed)
+                    collect(future)
         except KeyboardInterrupt:
             print("\nConversion interrupted by user (Ctrl+C). Stopping FFmpeg and writing partial summary...")
             # Queued events don't start, and the running ones stop and remove
             # their partial files; they're converted again on the next run
             stop_ffmpeg()
             executor.shutdown(wait=True, cancel_futures=True)
+            # Keep the results of events that finished before the stop
+            for future in futures:
+                if future not in collected and not future.cancelled() and future.exception() is None:
+                    collect(future)
             summary.append("PROCESS INTERRUPTED: Conversion stopped by user.")
             interrupted = True
+            failed_files = failed_files + current_failed
             break
         finally:
             executor.shutdown(wait=True)
@@ -444,7 +458,20 @@ def main():
 
     # Write failed files list, with absolute paths so --retry-failed finds them
     # from any folder (lists from earlier versions are relative to where they ran)
-    if failed_files:
+    if interrupted:
+        # The earlier list may name files this run didn't get to, so keep it and
+        # add this run's failures; files that were converted after all are skipped
+        listed = []
+        if FAILED_FILES.exists():
+            with open(FAILED_FILES, encoding='utf-8') as f:
+                listed = [line.strip() for line in f if line.strip()]
+        listed = list(dict.fromkeys(listed + [os.path.abspath(failed) for failed in failed_files]))
+        if listed:
+            with open(FAILED_FILES, 'w', encoding='utf-8') as f:
+                f.writelines(entry + '\n' for entry in listed)
+            print(f"Failed files list written to {FAILED_FILES} ({len(listed)} files)")
+        print("Conversion stopped before it finished; run it again to convert the rest.")
+    elif failed_files:
         with open(FAILED_FILES, 'w', encoding='utf-8') as f:
             for failed in failed_files:
                 f.write(os.path.abspath(failed) + '\n')

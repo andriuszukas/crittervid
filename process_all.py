@@ -1,4 +1,5 @@
 import subprocess
+import signal
 import sys
 import argparse
 import os
@@ -14,6 +15,18 @@ else:
 CONVERT_SCRIPT = os.path.join(SCRIPT_DIR, 'convert_media.py')
 MERGE_SCRIPT = os.path.join(SCRIPT_DIR, 'merge_videos.py')
 VALIDATE_SCRIPT = os.path.join(SCRIPT_DIR, 'validate_output.py')
+
+
+def run_step(cmd):
+    """Run one step of the pipeline and return its exit code. At a console,
+    Ctrl+C reaches the step too; let it stop cleanly (removing partial files and
+    writing its summary) instead of killing it, then stop the pipeline."""
+    proc = subprocess.Popen(cmd)
+    try:
+        return proc.wait()
+    except KeyboardInterrupt:
+        proc.wait()
+        raise
 
 
 def main():
@@ -63,7 +76,7 @@ def main():
         print(f"[DRY RUN] Would run: python {CONVERT_SCRIPT} {' '.join(convert_args)}")
         rc1 = 0
     else:
-        rc1 = subprocess.run([sys.executable, CONVERT_SCRIPT] + convert_args).returncode
+        rc1 = run_step([sys.executable, CONVERT_SCRIPT] + convert_args)
 
     print("=== Step 2: Merge .mp4 files into longer clips ===")
     merge_summary = os.path.join(args.output_dir, 'merged', 'merge_summary.txt')
@@ -82,7 +95,7 @@ def main():
             os.remove(merge_summary)
         except OSError:
             pass
-        rc2 = subprocess.run([sys.executable, MERGE_SCRIPT] + merge_args).returncode
+        rc2 = run_step([sys.executable, MERGE_SCRIPT] + merge_args)
 
     if args.validate:
         print("=== Step 3: Validate output and directory structure ===")
@@ -99,7 +112,7 @@ def main():
             print(f"[DRY RUN] Would run: python validate_output.py {' '.join(validate_args)}")
             rc3 = 0
         else:
-            rc3 = subprocess.run([sys.executable, VALIDATE_SCRIPT] + validate_args).returncode
+            rc3 = run_step([sys.executable, VALIDATE_SCRIPT] + validate_args)
     else:
         print("=== Step 3: Validation skipped (use --validate to enable) ===")
         rc3 = 0
@@ -126,4 +139,12 @@ def main():
     return 1
 
 if __name__ == '__main__':
-    sys.exit(main())
+    # On Windows, Ctrl+Break (how a program stops a console child) stops the
+    # pipeline like Ctrl+C
+    if hasattr(signal, 'SIGBREAK'):
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("=== Stopped by user (Ctrl+C) ===")
+        sys.exit(1)
