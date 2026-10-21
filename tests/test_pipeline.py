@@ -1,9 +1,15 @@
 """Pipeline behaviour, using the fake ffmpeg from fake_ffmpeg.py."""
 import json
 import os
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
+
+from conftest import GROUP_DIR
 
 
 # --- Conversion: failed output must never look finished ---
@@ -550,3 +556,106 @@ def test_merge_and_validate_ignore_folders_that_arent_days(ws):
     result = ws.run('validate_output.py')
     assert 'Traceback' not in result.stdout + result.stderr
     assert 'no matching converted files' in result.stdout   # the stray file, as before
+
+
+# --- Stopping a conversion (#9) ---
+
+def start_slow_run(ws, script, *args, segments=10):
+    """Start `script` on `segments` segments that each take the fake FFmpeg 3 s,
+    and return the process once the first is being written."""
+    for i in range(segments):
+        ws.add_media(f'{i:04d}.media', b'good')
+    env = dict(ws.env, FAKE_FFMPEG_SLEEP='3', FAKE_FFMPEG_LOG=str(ws.root / 'calls'))
+    proc = subprocess.Popen([sys.executable, script, '--accel', 'cpu', '--workers', '1', *args],
+                            cwd=ws.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            encoding='utf-8', errors='replace',
+                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
+                            start_new_session=os.name != 'nt')
+    deadline = time.monotonic() + 30
+    while not ws.files('*.part') and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return proc
+
+
+def interrupt(proc, console=False):
+    """Ctrl+C. On Windows: Ctrl+Break to the process group, as a console sends
+    Ctrl+C to everything in it (this also ends the fake FFmpeg, whose .bat
+    launcher terminate() wouldn't reach). Elsewhere: SIGINT to the process only,
+    so the converter has to end FFmpeg itself, or with `console` to its whole
+    process group, as a terminal does."""
+    if os.name == 'nt':
+        os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+    elif console:
+        os.killpg(proc.pid, signal.SIGINT)
+    else:
+        os.kill(proc.pid, signal.SIGINT)
+    started = time.monotonic()
+    output, _ = proc.communicate(timeout=60)
+    return output, time.monotonic() - started
+
+
+def test_ctrl_c_stops_the_conversion_promptly(ws):
+    # Ten segments of 3 s each, one at a time: 30 s if Ctrl+C didn't stop it
+    proc = start_slow_run(ws, 'convert_media.py')
+
+    output, took = interrupt(proc)
+
+    assert took < 10, output
+    assert proc.returncode == 1, output
+    assert 'interrupted' in output and 'completed successfully' not in output
+    assert len(list(ws.root.glob('calls.*'))) <= 2   # queued segments never started
+    assert ws.files('*.part') == []
+    assert len(ws.files('*.mp4')) < 10
+    assert 'PROCESS INTERRUPTED' in (ws.root / 'output' / 'conversion_summary.txt').read_text(encoding='utf-8')
+    # Nothing was listed as failed: the stopped segment is simply converted next time
+    assert not (ws.root / 'output' / 'conversion_failed.txt').exists()
+
+
+def test_ctrl_c_keeps_the_list_of_files_still_to_retry(ws):
+    # An earlier run's list, which this run stops before it can check
+    listed = ws.root / 'output' / 'conversion_failed.txt'
+    listed.parent.mkdir(parents=True)
+    other = str(ws.root / 'input' / 'DCIM' / '2025' / '10' / '01' / '1759300001_0001')
+    listed.write_text(other + '\n', encoding='utf-8')
+    proc = start_slow_run(ws, 'convert_media.py')
+
+    output, _ = interrupt(proc)
+
+    assert proc.returncode == 1, output
+    assert listed.read_text(encoding='utf-8').splitlines() == [other]
+
+
+def test_ctrl_c_during_a_retry_lists_what_it_didnt_get_to(ws, tmp_path):
+    # Two events to retry: one converts, the other is stopped. An older,
+    # relative entry for the stopped one appears once in the list afterwards
+    done = ws.root / 'input' / 'DCIM' / '2025' / '10' / '01' / '1759300001_0001'
+    done.mkdir(parents=True)
+    (done / '0000.media').write_bytes(b'FAST')
+    listed = ws.root / 'output' / 'conversion_failed.txt'
+    listed.parent.mkdir(parents=True)
+    slow = ws.root / GROUP_DIR
+    listed.write_text(f'{done}\n{GROUP_DIR}\n', encoding='utf-8')
+    proc = start_slow_run(ws, 'convert_media.py', '--retry-failed', '--workers', '2', segments=3)
+    deadline = time.monotonic() + 30
+    while not ws.files('1759300001_0001_0000.mp4') and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    output, _ = interrupt(proc)
+
+    assert proc.returncode == 1, output
+    assert ws.files('1759300001_0001_0000.mp4')   # the quick event converted before the stop
+    assert not ws.files('1759300000_0001_0000.mp4')   # and the slow one was stopped
+    assert listed.read_text(encoding='utf-8').splitlines() == [str(slow)]
+
+
+def test_ctrl_c_stops_process_all_after_the_conversion_stops_cleanly(ws):
+    proc = start_slow_run(ws, 'process_all.py')
+
+    output, took = interrupt(proc, console=True)   # process_all relies on the step getting it too
+
+    assert took < 10, output
+    assert proc.returncode == 1, output
+    assert 'Stopped by user' in output and 'Traceback' not in output
+    assert '=== Step 2' not in output
+    assert ws.files('*.part') == []
+    assert 'PROCESS INTERRUPTED' in (ws.root / 'output' / 'conversion_summary.txt').read_text(encoding='utf-8')
