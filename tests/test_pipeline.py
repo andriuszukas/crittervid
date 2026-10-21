@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import GROUP_DIR
+
 
 # --- Conversion: failed output must never look finished ---
 
@@ -603,16 +605,39 @@ def test_ctrl_c_stops_the_conversion_promptly(ws):
 
 
 def test_ctrl_c_keeps_the_list_of_files_still_to_retry(ws):
+    # An earlier run's list, which this run stops before it can check
     listed = ws.root / 'output' / 'conversion_failed.txt'
     listed.parent.mkdir(parents=True)
-    still_to_do = str(ws.root / 'input' / 'DCIM' / '2025' / '10' / '01' / '1759300001_0001')
-    listed.write_text(still_to_do + '\n', encoding='utf-8')
+    other = str(ws.root / 'input' / 'DCIM' / '2025' / '10' / '01' / '1759300001_0001')
+    listed.write_text(other + '\n', encoding='utf-8')
     proc = start_slow_run(ws, 'convert_media.py')
 
     output, _ = interrupt(proc)
 
     assert proc.returncode == 1, output
-    assert listed.read_text(encoding='utf-8').splitlines() == [still_to_do]
+    assert listed.read_text(encoding='utf-8').splitlines() == [other]
+
+
+def test_ctrl_c_during_a_retry_lists_what_it_didnt_get_to(ws, tmp_path):
+    # Two events to retry: one converts, the other is stopped. An older,
+    # relative entry for the stopped one appears once in the list afterwards
+    done = ws.root / 'input' / 'DCIM' / '2025' / '10' / '01' / '1759300001_0001'
+    done.mkdir(parents=True)
+    (done / '0000.media').write_bytes(b'FAST')
+    listed = ws.root / 'output' / 'conversion_failed.txt'
+    listed.parent.mkdir(parents=True)
+    slow = ws.root / GROUP_DIR
+    listed.write_text(f'{done}\n{GROUP_DIR}\n', encoding='utf-8')
+    proc = start_slow_run(ws, 'convert_media.py', '--retry-failed', '--workers', '2', segments=3)
+    deadline = time.monotonic() + 30
+    while not ws.files('1759300001_0001_0000.mp4') and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    output, _ = interrupt(proc)
+
+    assert proc.returncode == 1, output
+    assert ws.files('1759300001_0001_0000.mp4')   # the quick event converted before the stop
+    assert listed.read_text(encoding='utf-8').splitlines() == [str(slow)]
 
 
 def test_ctrl_c_stops_process_all_after_the_conversion_stops_cleanly(ws):

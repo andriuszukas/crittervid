@@ -20,7 +20,9 @@ VALIDATE_SCRIPT = os.path.join(SCRIPT_DIR, 'validate_output.py')
 def run_step(cmd):
     """Run one step of the pipeline and return its exit code. At a console,
     Ctrl+C reaches the step too; let it stop cleanly (removing partial files and
-    writing its summary) instead of killing it, then stop the pipeline."""
+    writing its summary) instead of killing it, then stop the pipeline. (A stop
+    signal sent to this process alone doesn't reach the step, so it then waits
+    for the step to finish.)"""
     proc = subprocess.Popen(cmd)
     try:
         return proc.wait()

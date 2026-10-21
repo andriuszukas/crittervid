@@ -16,7 +16,8 @@ If FAKE_FFMPEG_FAIL_HWACCEL is set, any call with -hwaccel fails, like a machine
 whose GPU can't decode the file.
 
 If FAKE_FFMPEG_SLEEP is set, a conversion first writes its partial output and
-then takes that many seconds, like a long encode.
+then takes that many seconds, like a long encode (unless its input contains
+b'FAST').
 """
 import json
 import os
@@ -104,7 +105,7 @@ def main():
 
     if b'BAD' in data:
         fail(out_path)
-    if os.environ.get('FAKE_FFMPEG_SLEEP'):
+    if os.environ.get('FAKE_FFMPEG_SLEEP') and b'FAST' not in data:
         with open(out_path, 'wb') as f:
             f.write(b'PARTIAL')
         time.sleep(float(os.environ['FAKE_FFMPEG_SLEEP']))

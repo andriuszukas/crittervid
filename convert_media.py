@@ -44,9 +44,10 @@ def run_ffmpeg(cmd):
     finally:
         with _running_lock:
             _running.discard(proc)
-    # A console's Ctrl+C reaches FFmpeg slightly before the run starts stopping,
-    # so give a failure a moment to turn out to be the stop
-    if proc.returncode != 0 and STOP.wait(1.0):
+    # A console's Ctrl+C reaches FFmpeg slightly before the run starts stopping
+    # (the main thread checks every 0.5 s), so give a failure that long to turn
+    # out to be the stop rather than a failed conversion
+    if proc.returncode != 0 and STOP.wait(0.6):
         raise Stopped
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
@@ -308,6 +309,13 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
         failed_files.append(str(media_path))
         return False
 
+def list_entries(paths):
+    """Paths for the failed-files list: absolute, each once. Paths from lists of
+    earlier versions are relative to where those ran, as before; making them
+    absolute too lets them match this run's (case-insensitively on Windows)."""
+    return [str(p) for p in dict.fromkeys(Path(os.path.abspath(p)) for p in paths)]
+
+
 def group_by_event(paths):
     """Group .media files and event folders into {event folder: [segments]}.
 
@@ -384,7 +392,7 @@ def main():
     if args.retry_failed and FAILED_FILES.exists():
         print(f"Retrying failed files from {FAILED_FILES}...")
         with open(FAILED_FILES, 'r', encoding='utf-8') as f:
-            media_files = [Path(line.strip()) for line in f if line.strip()]
+            media_files = [Path(p) for p in list_entries(line.strip() for line in f if line.strip())]
         print(f"Found {len(media_files)} failed files to retry.")
     else:
         media_files = list(find_media_files(INPUT_ROOT))
@@ -404,7 +412,7 @@ def main():
 
         current_failed = []
         executor = ThreadPoolExecutor(max_workers=args.workers)
-        futures, collected = [], set()
+        futures, collected = {}, set()
 
         def collect(future):
             result_summary, result_failed, success = future.result()
@@ -413,8 +421,8 @@ def main():
             collected.add(future)
 
         try:
-            futures = [executor.submit(convert_event_parallel, (event_dir, segments, accel, args.copy))
-                       for event_dir, segments in group_by_event(media_files).items()]
+            futures = {executor.submit(convert_event_parallel, (event_dir, segments, accel, args.copy)): event_dir
+                       for event_dir, segments in group_by_event(media_files).items()}
             pending = set(futures)
             while pending:
                 # Wait in short steps: on Windows, Ctrl+C doesn't interrupt a wait
@@ -434,7 +442,12 @@ def main():
                     collect(future)
             summary.append("PROCESS INTERRUPTED: Conversion stopped by user.")
             interrupted = True
-            failed_files = failed_files + current_failed
+            if args.retry_failed or retry_count:
+                # Still to retry: this round's failures and the events it didn't finish
+                failed_files = current_failed + [str(event_dir) for future, event_dir in futures.items()
+                                                 if future not in collected]
+            else:
+                failed_files = current_failed
             break
         finally:
             executor.shutdown(wait=True)
@@ -459,13 +472,14 @@ def main():
     # Write failed files list, with absolute paths so --retry-failed finds them
     # from any folder (lists from earlier versions are relative to where they ran)
     if interrupted:
-        # The earlier list may name files this run didn't get to, so keep it and
-        # add this run's failures; files that were converted after all are skipped
-        listed = []
-        if FAILED_FILES.exists():
+        # A retry lists what it didn't get to; another run keeps the earlier list
+        # (it stopped before it could tell which of those are fine now) and adds
+        # its own failures
+        listed = failed_files
+        if not (args.retry_failed or retry_count) and FAILED_FILES.exists():
             with open(FAILED_FILES, encoding='utf-8') as f:
-                listed = [line.strip() for line in f if line.strip()]
-        listed = list(dict.fromkeys(listed + [os.path.abspath(failed) for failed in failed_files]))
+                listed = [line.strip() for line in f if line.strip()] + failed_files
+        listed = list_entries(listed)
         if listed:
             with open(FAILED_FILES, 'w', encoding='utf-8') as f:
                 f.writelines(entry + '\n' for entry in listed)
@@ -473,8 +487,7 @@ def main():
         print("Conversion stopped before it finished; run it again to convert the rest.")
     elif failed_files:
         with open(FAILED_FILES, 'w', encoding='utf-8') as f:
-            for failed in failed_files:
-                f.write(os.path.abspath(failed) + '\n')
+            f.writelines(entry + '\n' for entry in list_entries(failed_files))
         print(f"Failed files list written to {FAILED_FILES} ({len(failed_files)} files)")
         print(f"To retry failed files, run: python convert_media.py --retry-failed")
     else:
