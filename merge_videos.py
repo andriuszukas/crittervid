@@ -8,6 +8,7 @@ import re
 import argparse
 import sys
 from ffmpeg_helper import get_ffmpeg_path, get_ffprobe_path
+import media_format
 
 OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
@@ -32,6 +33,25 @@ def find_mp4_files(root):
             if filename.endswith('.mp4'):
                 yield Path(dirpath) / filename
 
+def unset_clock_files(files):
+    """The converted files of events recorded before the camera's clock was set
+    (#73). Their times count from the camera's power-up, not real days, so they
+    aren't merged."""
+    return [f for f in files if (m := FILENAME_RE.search(str(f)))
+            and not media_format.clock_was_set(int(m.group(1)))]
+
+
+def unset_clock_day(day):
+    """Whether a day folder ('YYYY/MM/DD') has a date only a camera whose clock
+    wasn't set gives its events, such as 1970/01/01 or 2106/02/07 (#73). Any
+    other folder name isn't a day, so it's False."""
+    return bool(re.fullmatch(r'\d{4}/\d{2}/\d{2}', day)) and not 2000 <= int(day[:4]) < 2100
+
+
+UNSET_CLOCK_MERGES = ("holds merged files an earlier version made from events recorded before the "
+                      "camera's clock was set; they mix events whose real time is unknown and can be deleted")
+
+
 # Group files by day
 def group_files_by_day(files):
     # An event converted as one file (<event>.mp4) supersedes per-segment files left
@@ -40,7 +60,7 @@ def group_files_by_day(files):
     groups = {}
     for f in files:
         m = FILENAME_RE.search(str(f))
-        if not m or f.parent.name in events:
+        if not m or f.parent.name in events or not media_format.clock_was_set(int(m.group(1))):
             continue
         timestamp = m.group(1)
         dt = datetime.fromtimestamp(int(timestamp))
@@ -249,6 +269,21 @@ def main():
     groups = group_files_by_day(mp4_files)
     summary = []
     failed = 0
+    def warn(msg):
+        print(f"WARNING: {msg}")
+        summary.append(f"WARNING: {msg}")
+
+    unset = sorted(unset_clock_files(mp4_files))
+    if unset:
+        events = {FILENAME_RE.search(str(f)).group(1) for f in unset}
+        warn(f"{len(events)} events weren't merged: they were recorded before the camera's "
+             f"clock was set, so their real time is unknown (e.g. {unset[0]})")
+    # Earlier versions merged such events into a day of their own; say so rather
+    # than delete it, as the record that would show what it holds doesn't exist
+    for day_dir in sorted(MERGED_ROOT.glob('*/*/*')):
+        if (day_dir.is_dir() and unset_clock_day(day_dir.relative_to(MERGED_ROOT).as_posix())
+                and any(MERGED_NAME.fullmatch(f.name) for f in day_dir.iterdir())):
+            warn(f"{day_dir} {UNSET_CLOCK_MERGES}")
     for day_start, files in groups.items():
         n = max(1, args.splits_per_day)
         total = len(files)

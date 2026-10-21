@@ -284,6 +284,9 @@ def convert_event_parallel(args):
         results = [convert_media_file(segment, local_summary, accel, local_failed, copy_mode)
                    for segment in sorted(segments)]
         success = all(results)
+    if success and not media_format.clock_was_set(int(event_dir.name.split('_')[0])):
+        report(local_summary, f"WARNING: {event_dir}: recorded before the camera's clock was set, "
+                              f"so its real time is unknown; it won't be merged with dated days")
     return local_summary, local_failed, success
 
 def main():

@@ -228,7 +228,10 @@ def check_merged_days(converted, merged, probes):
             problems += [f'WARNING: {part}: part {k} of {n} is not a part the merge writes'
                          for k, part in sorted(set_parts.items()) if not 1 <= k <= n]
     for day in sorted(found):
-        problems.append(f'WARNING: merged files for {day} have no matching converted files')
+        if merge_videos.unset_clock_day(day):
+            problems.append(f'WARNING: {MERGED_ROOT / day} {merge_videos.UNSET_CLOCK_MERGES}')
+        else:
+            problems.append(f'WARNING: merged files for {day} have no matching converted files')
     return problems
 
 
