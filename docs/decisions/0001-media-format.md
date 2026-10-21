@@ -107,7 +107,12 @@ Reviewing the first version against the whole card found three problems the gene
   - About 11 events have recording pauses of 11–31 s.
   - FFmpeg treats MPEG-TS timestamp jumps over 10 s as errors and closes them up. That shortened the video but not the audio.
   - The threshold is raised (`-dts_delta_threshold`), so pauses are kept.
-  - One event starts with a single damaged keyframe 31 s before the rest. FFmpeg places that one frame 0.27 s late; every later frame is exact.
+  - One event starts with a single damaged keyframe 31 s before the rest. FFmpeg places that one frame 0.27 s late; every later frame is exact. The keyframe turned out to carry leftover pictures; see below.
+- **Leftover pictures in the first keyframe (#77).**
+  - In 3 of 94,960 segments, an event's first keyframe record holds slices of earlier pictures (3 to 31 of them, no audio) in front of its SPS, PPS and IDR picture. No other record on the card is packed like this.
+  - FFmpeg took the leftover slices for frames of their own, sharing the keyframe's timestamp, so the video started 0.27 to 2.82 s late and the first frame was shown too briefly. The merge cut those seconds from the day.
+  - The converter now removes everything before the first keyframe's SPS, with a warning, and drops any frames (and audio) before the first keyframe, since neither can be decoded. The first frame is then at 0 and lasts until the next one, as the camera recorded.
+  - A keyframe counts only if it holds its own SPS and PPS, as every keyframe on the card does. If an event has none, it's converted as before, with a warning.
 - **Damaged segments.**
   - A few events end in a segment cut off by power loss, or an empty file. Some have tails of garbage records with timestamp 0, or segments that start by repeating earlier frames.
   - Empty segments are skipped, incomplete final records ignored, and frames that don't move forward in time dropped, all with a warning.
