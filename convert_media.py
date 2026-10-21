@@ -380,11 +380,12 @@ def main():
             f.write(line + '\n')
     print(f"Summary report written to {SUMMARY_REPORT}")
 
-    # Write failed files list
+    # Write failed files list, with absolute paths so --retry-failed finds them
+    # from any folder (lists from earlier versions are relative to where they ran)
     if failed_files:
         with open(FAILED_FILES, 'w', encoding='utf-8') as f:
             for failed in failed_files:
-                f.write(failed + '\n')
+                f.write(os.path.abspath(failed) + '\n')
         print(f"Failed files list written to {FAILED_FILES} ({len(failed_files)} files)")
         print(f"To retry failed files, run: python convert_media.py --retry-failed")
     else:

@@ -4,6 +4,8 @@ b'OK' + the video it was given, so the output shows which frames went in.
 (tests/test_media_conversion.py checks the real thing.)"""
 import json
 import struct
+import subprocess
+import sys
 
 import pytest
 
@@ -41,8 +43,8 @@ def test_failed_event_is_listed_and_converted_by_retry_failed(ws):
     result = convert(ws)
 
     assert result.returncode == 1
-    failed = (ws.root / 'output' / 'conversion_failed.txt').read_text().split()
-    assert failed == [str((ws.root / GROUP_DIR).relative_to(ws.root))]   # the event, not a segment
+    failed = (ws.root / 'output' / 'conversion_failed.txt').read_text().splitlines()
+    assert failed == [str(ws.root / GROUP_DIR)]   # the event, not a segment
     assert not event_output(ws).exists()
 
     ws.add_media('0013.media', segment(b'fixed', 14_000_000))
@@ -174,3 +176,20 @@ def test_leftover_pictures_in_front_of_the_first_keyframe_are_removed(ws):
     assert any('WARNING' in line and 'earlier pictures' in line for line in result.stdout.splitlines())
     data = event_output(ws).read_bytes()
     assert b'first' in data and b'later' in data and b'leftover' not in data
+
+
+def test_retry_failed_works_from_another_folder(ws, tmp_path):
+    # The first run uses the default, relative input folder
+    ws.add_media('0000.media', segment(b'first', 1_000_000))
+    ws.add_media('0013.media', segment(b'BAD', 14_000_000))
+    assert convert(ws).returncode == 1
+    ws.add_media('0013.media', segment(b'fixed', 14_000_000))
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+
+    result = subprocess.run([sys.executable, str(ws.root / 'convert_media.py'), '--accel', 'cpu', '--retry-failed',
+                             '--output-dir', str(ws.root / 'output')],
+                            cwd=elsewhere, env=ws.env, capture_output=True, encoding='utf-8', errors='replace')
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert b'fixed' in event_output(ws).read_bytes()
