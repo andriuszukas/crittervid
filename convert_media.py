@@ -412,7 +412,7 @@ def main():
 
         current_failed = []
         executor = ThreadPoolExecutor(max_workers=args.workers)
-        futures, collected = {}, set()
+        events, futures, collected = None, {}, set()
 
         def collect(future):
             result_summary, result_failed, success = future.result()
@@ -421,8 +421,9 @@ def main():
             collected.add(future)
 
         try:
-            futures = {executor.submit(convert_event_parallel, (event_dir, segments, accel, args.copy)): event_dir
-                       for event_dir, segments in group_by_event(media_files).items()}
+            events = group_by_event(media_files)
+            for event_dir, segments in events.items():
+                futures[executor.submit(convert_event_parallel, (event_dir, segments, accel, args.copy))] = event_dir
             pending = set(futures)
             while pending:
                 # Wait in short steps: on Windows, Ctrl+C doesn't interrupt a wait
@@ -443,9 +444,11 @@ def main():
             summary.append("PROCESS INTERRUPTED: Conversion stopped by user.")
             interrupted = True
             if args.retry_failed or retry_count:
-                # Still to retry: this round's failures and the events it didn't finish
-                failed_files = current_failed + [str(event_dir) for future, event_dir in futures.items()
-                                                 if future not in collected]
+                # Still to retry: this round's failures and the events it didn't
+                # finish, including any it hadn't started on
+                finished = {futures[future] for future in collected}
+                failed_files = current_failed + ([str(p) for p in media_files] if events is None else
+                                                 [str(e) for e in events if e not in finished])
             else:
                 failed_files = current_failed
             break
@@ -484,6 +487,8 @@ def main():
             with open(FAILED_FILES, 'w', encoding='utf-8') as f:
                 f.writelines(entry + '\n' for entry in listed)
             print(f"Failed files list written to {FAILED_FILES} ({len(listed)} files)")
+        elif args.retry_failed or retry_count:
+            FAILED_FILES.unlink(missing_ok=True)   # everything it was retrying is done
         print("Conversion stopped before it finished; run it again to convert the rest.")
     elif failed_files:
         with open(FAILED_FILES, 'w', encoding='utf-8') as f:

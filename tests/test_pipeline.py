@@ -637,6 +637,7 @@ def test_ctrl_c_during_a_retry_lists_what_it_didnt_get_to(ws, tmp_path):
 
     assert proc.returncode == 1, output
     assert ws.files('1759300001_0001_0000.mp4')   # the quick event converted before the stop
+    assert not ws.files('1759300000_0001_0000.mp4')   # and the slow one was stopped
     assert listed.read_text(encoding='utf-8').splitlines() == [str(slow)]
 
 
