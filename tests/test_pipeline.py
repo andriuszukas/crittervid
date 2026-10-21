@@ -569,19 +569,26 @@ def start_slow_run(ws, script, *args, segments=10):
     proc = subprocess.Popen([sys.executable, script, '--accel', 'cpu', '--workers', '1', *args],
                             cwd=ws.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             encoding='utf-8', errors='replace',
-                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0)
+                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
+                            start_new_session=os.name != 'nt')
     deadline = time.monotonic() + 30
     while not ws.files('*.part') and time.monotonic() < deadline:
         time.sleep(0.1)
     return proc
 
 
-def interrupt(proc):
+def interrupt(proc, console=False):
     """Ctrl+C. On Windows: Ctrl+Break to the process group, as a console sends
     Ctrl+C to everything in it (this also ends the fake FFmpeg, whose .bat
     launcher terminate() wouldn't reach). Elsewhere: SIGINT to the process only,
-    so the converter has to end FFmpeg itself."""
-    os.kill(proc.pid, signal.CTRL_BREAK_EVENT if os.name == 'nt' else signal.SIGINT)
+    so the converter has to end FFmpeg itself, or with `console` to its whole
+    process group, as a terminal does."""
+    if os.name == 'nt':
+        os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+    elif console:
+        os.killpg(proc.pid, signal.SIGINT)
+    else:
+        os.kill(proc.pid, signal.SIGINT)
     started = time.monotonic()
     output, _ = proc.communicate(timeout=60)
     return output, time.monotonic() - started
@@ -644,7 +651,7 @@ def test_ctrl_c_during_a_retry_lists_what_it_didnt_get_to(ws, tmp_path):
 def test_ctrl_c_stops_process_all_after_the_conversion_stops_cleanly(ws):
     proc = start_slow_run(ws, 'process_all.py')
 
-    output, took = interrupt(proc)
+    output, took = interrupt(proc, console=True)   # process_all relies on the step getting it too
 
     assert took < 10, output
     assert proc.returncode == 1, output
