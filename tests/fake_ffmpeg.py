@@ -14,10 +14,14 @@ named <FAKE_FFMPEG_LOG>.<pid>.<id>. A concat list is also copied to
 
 If FAKE_FFMPEG_FAIL_HWACCEL is set, any call with -hwaccel fails, like a machine
 whose GPU can't decode the file.
+
+If FAKE_FFMPEG_SLEEP is set, a conversion first writes its partial output and
+then takes that many seconds, like a long encode.
 """
 import json
 import os
 import sys
+import time
 import uuid
 
 
@@ -100,6 +104,10 @@ def main():
 
     if b'BAD' in data:
         fail(out_path)
+    if os.environ.get('FAKE_FFMPEG_SLEEP'):
+        with open(out_path, 'wb') as f:
+            f.write(b'PARTIAL')
+        time.sleep(float(os.environ['FAKE_FFMPEG_SLEEP']))
     with open(out_path, 'wb') as f:
         f.write(b'OK' + data)
 

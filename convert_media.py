@@ -5,8 +5,10 @@ from pathlib import Path
 import argparse
 import sys
 import re
+import signal
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import platform
 from ffmpeg_helper import get_ffmpeg_path
 import media_format
@@ -16,6 +18,45 @@ OUTPUT_ROOT = Path('output')
 FFMPEG_PATH = get_ffmpeg_path()  # Auto-detect ffmpeg location
 SUMMARY_REPORT = OUTPUT_ROOT / 'conversion_summary.txt'
 FAILED_FILES = OUTPUT_ROOT / 'conversion_failed.txt'
+
+class Stopped(BaseException):
+    """The run was stopped (Ctrl+C) before this conversion could finish. Not an
+    Exception, so the per-file error handling doesn't report it as a failure."""
+
+
+# Set on Ctrl+C: no new FFmpeg starts, and the running ones are ended
+STOP = threading.Event()
+_running = set()
+_running_lock = threading.Lock()
+
+
+def run_ffmpeg(cmd):
+    """Run FFmpeg like subprocess.run(cmd, capture_output=True), but so that
+    stop_ffmpeg() can end it. Raises Stopped instead of starting it once the run
+    is stopping, and if it fails because the run was stopped."""
+    with _running_lock:
+        if STOP.is_set():
+            raise Stopped
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        _running.add(proc)
+    try:
+        out, err = proc.communicate()
+    finally:
+        with _running_lock:
+            _running.discard(proc)
+    if proc.returncode != 0 and STOP.is_set():
+        raise Stopped
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def stop_ffmpeg():
+    """Stop starting FFmpeg and end the running ones. A console's Ctrl+C reaches
+    them too, but not when the run is stopped some other way."""
+    with _running_lock:
+        STOP.set()
+        for proc in _running:
+            proc.terminate()
+
 
 # Hardware acceleration options for FFmpeg: (options before -i, options after -i)
 ACCEL_OPTIONS = {
@@ -172,7 +213,7 @@ def convert_event(event_dir, segments, summary, failed_files):
         out_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='crittervid-') as workdir:
             cmd = record_format_command(video, audio, tmp_path, Path(workdir))
-            result = subprocess.run(cmd, capture_output=True)
+            result = run_ffmpeg(cmd)
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
             report(summary, f"ERROR: Failed to convert {event_dir}: {result.stderr.decode('utf-8', errors='replace')}")
@@ -193,6 +234,9 @@ def convert_event(event_dir, segments, summary, failed_files):
             report(summary, f"WARNING: {event_dir}: the footage spans {span:.1f} s, "
                             f"but the folder name says {int(expected)} s")
         return True
+    except Stopped:
+        tmp_path.unlink(missing_ok=True)
+        raise
     except Exception as e:
         if tmp_path.exists():
             tmp_path.unlink(missing_ok=True)
@@ -234,7 +278,7 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
             input_opts, output_opts = ACCEL_OPTIONS[accel]
             cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', str(media_path)] + output_opts + FALLBACK_OUTPUT + [str(tmp_path)]
             method = accel
-        result = subprocess.run(cmd, capture_output=True)
+        result = run_ffmpeg(cmd)
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
             error_msg = f"ERROR: Failed to convert {media_path}: {result.stderr.decode('utf-8', errors='replace')}"
@@ -249,6 +293,10 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
             print(success_msg)
             summary.append(success_msg)
             return True
+    except Stopped:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        raise
     except Exception as e:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
@@ -305,6 +353,10 @@ def main():
     parser.add_argument('--retry-failed', action='store_true', help='Retry only files that failed in previous run')
     parser.add_argument('--max-retries', type=int, default=3, help='Maximum number of retry attempts for failed files (default: 3)')
     args = parser.parse_args()
+    # On Windows, Ctrl+Break (how a program stops a console child) stops the run
+    # like Ctrl+C
+    if hasattr(signal, 'SIGBREAK'):
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
 
     # Update global paths based on arguments
     global INPUT_ROOT, OUTPUT_ROOT, SUMMARY_REPORT, FAILED_FILES
@@ -349,19 +401,29 @@ def main():
             print(f"Starting conversion with {args.workers} workers...")
 
         current_failed = []
+        executor = ThreadPoolExecutor(max_workers=args.workers)
         try:
-            with ThreadPoolExecutor(max_workers=args.workers) as executor:
-                futures = [executor.submit(convert_event_parallel, (event_dir, segments, accel, args.copy))
-                           for event_dir, segments in group_by_event(media_files).items()]
-                for future in as_completed(futures):
+            pending = {executor.submit(convert_event_parallel, (event_dir, segments, accel, args.copy))
+                       for event_dir, segments in group_by_event(media_files).items()}
+            while pending:
+                # Wait in short steps: on Windows, Ctrl+C doesn't interrupt a wait
+                # without a timeout
+                done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                for future in done:
                     result_summary, result_failed, success = future.result()
                     summary.extend(result_summary)
                     current_failed.extend(result_failed)
         except KeyboardInterrupt:
-            print("\nConversion interrupted by user (Ctrl+C). Writing partial summary...")
+            print("\nConversion interrupted by user (Ctrl+C). Stopping FFmpeg and writing partial summary...")
+            # Queued events don't start, and the running ones stop and remove
+            # their partial files; they're converted again on the next run
+            stop_ffmpeg()
+            executor.shutdown(wait=True, cancel_futures=True)
             summary.append("PROCESS INTERRUPTED: Conversion stopped by user.")
             interrupted = True
             break
+        finally:
+            executor.shutdown(wait=True)
 
         # Check if we should retry
         if not current_failed or retry_count >= max_retries - 1:

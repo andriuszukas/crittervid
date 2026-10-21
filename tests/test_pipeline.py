@@ -1,6 +1,10 @@
 """Pipeline behaviour, using the fake ffmpeg from fake_ffmpeg.py."""
 import json
 import os
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -550,3 +554,39 @@ def test_merge_and_validate_ignore_folders_that_arent_days(ws):
     result = ws.run('validate_output.py')
     assert 'Traceback' not in result.stdout + result.stderr
     assert 'no matching converted files' in result.stdout   # the stray file, as before
+
+
+
+# --- Stopping a conversion (#9) ---
+
+def test_ctrl_c_stops_the_conversion_promptly(ws):
+    # Ten segments of 3 s each, one at a time: 30 s if Ctrl+C didn't stop it
+    for i in range(10):
+        ws.add_media(f'{i:04d}.media', b'good')
+    env = dict(ws.env, FAKE_FFMPEG_SLEEP='3', FAKE_FFMPEG_LOG=str(ws.root / 'calls'))
+    windows = os.name == 'nt'
+    proc = subprocess.Popen([sys.executable, 'convert_media.py', '--accel', 'cpu', '--workers', '1'],
+                            cwd=ws.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            encoding='utf-8', errors='replace',
+                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if windows else 0)
+    deadline = time.monotonic() + 30
+    while not list(ws.root.glob('calls.*')) and time.monotonic() < deadline:   # FFmpeg has started
+        time.sleep(0.1)
+    time.sleep(0.5)
+
+    started = time.monotonic()
+    # Windows: Ctrl+Break to the process group, as a console sends Ctrl+C to
+    # everything in it. Elsewhere: SIGINT to the converter only, so it has to
+    # end FFmpeg itself
+    os.kill(proc.pid, signal.CTRL_BREAK_EVENT if windows else signal.SIGINT)
+    output, _ = proc.communicate(timeout=30)
+
+    assert time.monotonic() - started < 6, output
+    assert proc.returncode == 1, output
+    assert 'interrupted' in output
+    assert len(list(ws.root.glob('calls.*'))) <= 2   # queued segments never started
+    assert ws.files('*.part') == []
+    assert len(ws.files('*.mp4')) < 10
+    assert 'PROCESS INTERRUPTED' in (ws.root / 'output' / 'conversion_summary.txt').read_text(encoding='utf-8')
+    # Nothing was listed as failed: the stopped segment is simply converted next time
+    assert not (ws.root / 'output' / 'conversion_failed.txt').exists()
