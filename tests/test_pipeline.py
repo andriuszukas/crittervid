@@ -659,3 +659,41 @@ def test_ctrl_c_stops_process_all_after_the_conversion_stops_cleanly(ws):
     assert '=== Step 2' not in output
     assert ws.files('*.part') == []
     assert 'PROCESS INTERRUPTED' in (ws.root / 'output' / 'conversion_summary.txt').read_text(encoding='utf-8')
+
+
+# --- Unusual paths (#67) ---
+
+@pytest.mark.skipif(not sys.platform.startswith('linux'), reason='only Linux allows file names that are not UTF-8')
+def test_paths_that_arent_utf8_are_kept_in_reports_lists_and_merges(ws):
+    ws.add_media('0001.media', b'good')
+    ws.add_media('0002.media', b'BAD')
+    inp, out = os.fsdecode(b'in\xff'), os.fsdecode(b'out\xfe')
+    (ws.root / 'input').rename(ws.root / inp)
+    args = ['--accel', 'cpu', '--input-dir', f'{inp}/DCIM', '--output-dir', out]
+
+    result = ws.run('convert_media.py', *args)
+    assert result.returncode == 1, result.stdout + result.stderr   # 0002 failed, and is listed
+    assert b'in\xff' in (ws.root / out / 'conversion_failed.txt').read_bytes()
+    assert b'in\xff' in (ws.root / out / 'conversion_summary.txt').read_bytes()
+
+    (ws.root / inp / GROUP_DIR.relative_to('input') / '0002.media').write_bytes(b'fixed')
+    result = ws.run('convert_media.py', *args, '--retry-failed')
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    result = ws.run('merge_videos.py', '--output-dir', out)
+    assert result.returncode == 0, result.stdout + result.stderr
+    [merged] = (ws.root / out / 'merged').rglob('merged_*.mp4')
+    assert merged.read_bytes() == b'OKOKgoodOKfixed'
+
+
+@pytest.mark.skipif(os.name == 'nt', reason="Windows doesn't allow line breaks in file names")
+def test_merge_explains_a_path_with_a_line_break(ws):
+    ws.add_media('0001.media', b'good')
+    out = 'out\nput'
+    assert ws.run('convert_media.py', '--accel', 'cpu', '--output-dir', out).returncode == 0
+
+    result = ws.run('merge_videos.py', '--output-dir', out)
+
+    assert result.returncode == 1
+    assert 'line break' in result.stdout and 'Traceback' not in result.stdout + result.stderr
+    assert not list((ws.root / out / 'merged').rglob('merged_*.mp4'))

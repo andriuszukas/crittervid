@@ -1,5 +1,6 @@
 """End-to-end runs with the real ffmpeg. Skipped when ffmpeg isn't on PATH."""
 import json
+import os
 import subprocess
 
 import pytest
@@ -72,3 +73,17 @@ def test_fallback_and_event_files_of_one_day_merge_to_their_sum(real_ws, event_h
     assert result.returncode == 0, result.stdout + result.stderr
     [merged] = real_ws.files('merged_*.mp4')
     assert video_seconds(merged) == pytest.approx(15, abs=0.5)
+
+
+@pytest.mark.skipif(os.name == 'nt', reason="Windows doesn't allow ':' in file names")
+def test_full_pipeline_with_a_colon_in_a_relative_output_dir(real_ws):
+    # FFmpeg took the relative cam:2/... for a path in a protocol called cam: (#67)
+    make_clip(real_ws, '0001.media')
+    make_clip(real_ws, '0002.media')
+
+    result = real_ws.run('process_all.py', '--accel', 'cpu', '--output-dir', 'cam:2')
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    out = real_ws.root / 'cam:2'
+    assert len(list(out.rglob('1759300000_0001_*.mp4'))) == 2
+    assert len(list(out.rglob('merged_*.mp4'))) == 1
