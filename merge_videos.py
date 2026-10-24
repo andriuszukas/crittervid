@@ -138,9 +138,9 @@ def merge_group(start, end, files, summary, record, k, n):
             # and the video's last frame has an estimated length, so the two rarely
             # end together; left to itself, FFmpeg starts the next file after one
             # or the other depending on the version, which adds up over many files
-            end = video_end(file)
-            if end:
-                f.write(f"outpoint {end:.6f}\nduration {end:.6f}\n")
+            video_stop = video_end(file)
+            if video_stop:
+                f.write(f"outpoint {video_stop:.6f}\nduration {video_stop:.6f}\n")
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
     cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', media_arg(tmp_path)]

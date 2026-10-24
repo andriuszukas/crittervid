@@ -750,3 +750,23 @@ def test_merge_rejects_splits_that_dont_make_whole_minute_windows(ws, splits):
 
     assert result.returncode == 2
     assert '--splits-per-day must be 1 to 1440' in result.stderr
+
+
+def test_merging_again_removes_a_part_whose_window_is_now_empty(ws):
+    # An earlier version split two morning events by count: part 2 of 2, named
+    # 12:00-24:00, held the second. Now both belong in part 1, and part 2 goes
+    ws.add_media('0001.media', b'a')
+    ws.add_media('0002.media', b'b')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    day = ws.root / 'output' / 'merged' / '2025' / '10' / '01'
+    day.mkdir(parents=True)
+    old = day / 'merged_20251001_1200_20251002_0000_part2of2.mp4'
+    old.write_bytes(b'OKOKb')
+    source = Path(os.path.relpath(ws.converted('0002.media'), ws.root / 'output')).as_posix()
+    (day / 'merged_contents.json').write_text(json.dumps({old.name: [source]}), encoding='utf-8')
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '2')
+
+    assert result.returncode == 0, result.stdout
+    assert [f.name for f in day.glob('merged_*.mp4')] == ['merged_20251001_0000_20251001_1200_part1of2.mp4']
+    assert ws.run('validate_output.py').returncode == 0
