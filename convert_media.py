@@ -253,17 +253,17 @@ def convert_event(event_dir, segments, summary, failed_files):
 FALLBACK_OUTPUT = ['-video_track_timescale', '90000', '-f', 'mp4']
 
 
-# Convert .media to .mp4, preserving timestamp and group ID
+# Convert one .media segment to .mp4, named after its event and offset
 def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False):
     parts = media_path.parts
     tmp_path = None
     try:
         yyyy, mm, dd = parts[-5], parts[-4], parts[-3]
-        folder = parts[-2]  # unix_timestamp_groupid
-        timestamp, group_id = folder.split('_')
+        folder = parts[-2]  # <start time>_<event length in seconds>
+        timestamp, duration = folder.split('_')
         out_dir = OUTPUT_ROOT / yyyy / mm / dd / folder
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_name = f"{timestamp}_{group_id}_{media_path.stem}.mp4"
+        out_name = f"{timestamp}_{duration}_{media_path.stem}.mp4"
         out_path = out_dir / out_name
         # Write to a temp file and rename on success, so an interrupted or failed
         # conversion never leaves a partial .mp4 that later runs would skip

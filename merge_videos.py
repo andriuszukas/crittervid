@@ -17,7 +17,7 @@ FFPROBE_PATH = get_ffprobe_path()
 SEGMENT_DURATION_HOURS = 12
 SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
 
-# Regex to extract timestamp and group ID from filename
+# Regex to extract the event's start time and length from a file name
 # Converted files: one per event (<timestamp>_<duration>.mp4) for the cameras'
 # record format, or one per segment (<timestamp>_<duration>_<offset>.mp4)
 FILENAME_RE = re.compile(r'(?:^|[\\/])(\d{10,})_(\d{4})(?:_\d+)?\.mp4$')
@@ -262,9 +262,9 @@ def main():
     for stream in (sys.stdout, sys.stderr):
         if stream is not None:
             stream.reconfigure(encoding='utf-8', errors='replace')
-    parser = argparse.ArgumentParser(description="Merge .mp4 segments into longer clips per group and time period.")
+    parser = argparse.ArgumentParser(description="Merge converted .mp4 files into one or more clips per day.")
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory containing .mp4 files to merge (default: output)')
-    parser.add_argument('--splits-per-day', type=int, default=1, help='Number of merged .mp4 files to create per day per group (default: 1, i.e. all segments merged into one file per day).')
+    parser.add_argument('--splits-per-day', type=int, default=1, help='Number of merged .mp4 files to create per day (default: 1, i.e. all of a day\'s files merged into one).')
     args = parser.parse_args()
 
     # Update global paths based on arguments
