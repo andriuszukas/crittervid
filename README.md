@@ -43,10 +43,12 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
 The pipeline expects the camera's folder structure under the input directory:
 
 ```
-input/DCIM/YYYY/MM/DD/<unixtimestamp>_<groupid>/*.media
+input/DCIM/YYYY/MM/DD/<unixtimestamp>_<duration>/*.media
 ```
 
-Timestamps and group IDs are parsed from this layout and preserved in the output filenames.
+Each event folder is named after the event's start (Unix time, UTC) and its length in seconds
+(`0000` if the camera didn't record one). Output files keep these names, and the converter warns
+when an event's footage doesn't match its length.
 
 ## Usage
 

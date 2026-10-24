@@ -3,8 +3,8 @@
 CritterVid converts segmented `.media` files from wildlife trail cameras into `.mp4`, merges them into longer clips per day, and validates that the results play. It runs as a command-line pipeline or a Streamlit GUI, and can be packaged as a Windows executable with PyInstaller.
 
 ## Input layout
-- Camera files live under `input/DCIM/YYYY/MM/DD/<unix_timestamp>_<NNNN>/*.media`, with a `.info` file alongside (currently unused).
-- The layout matches Tuya's documented IPC storage format: the folder timestamp is the event start (UTC) and `NNNN` is the event length in seconds; each `.media` file name is its offset in seconds into the event. The code currently calls `NNNN` a "group ID" (see issue #30).
+- Camera files live under `input/DCIM/YYYY/MM/DD/<unix_timestamp>_<duration>/*.media`, with a `.info` file alongside (currently unused).
+- The layout matches Tuya's documented IPC storage format: the folder timestamp is the event start (UTC) and `<duration>` is the event length in seconds (`0000` if unknown); each `.media` file name is its offset in seconds into the event.
 
 ## Pipeline
 - `media_format.py` — the cameras' `.media` record format (24-byte headers with microsecond timestamps; H.264 video, 8 kHz PCM audio): reading records, aligning audio, and writing the video as MPEG-TS so every frame keeps its timestamp. See `docs/decisions/0001-media-format.md`.
