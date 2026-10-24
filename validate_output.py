@@ -21,7 +21,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from ffmpeg_helper import get_ffmpeg_path, get_ffprobe_path
+from ffmpeg_helper import get_ffmpeg_path, get_ffprobe_path, media_arg
 
 OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
@@ -58,7 +58,7 @@ class Probe:
 def _probe_once(path):
     result = subprocess.run(
         [FFPROBE, '-v', 'error', '-show_entries', 'format=format_name:stream=codec_type,start_time,duration',
-         '-of', 'json', str(path)],
+         '-of', 'json', media_arg(path)],
         capture_output=True, text=True, encoding='utf-8', errors='replace')
     if result.returncode != 0:
         lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
@@ -87,7 +87,7 @@ def decodes(path, input_opts):
     """True if FFmpeg can decode the whole file; with hardware decoding options, a
     file that fails is tried again on the CPU before giving up."""
     for opts in ([input_opts, []] if input_opts else [[]]):
-        cmd = [get_ffmpeg_path(), '-v', 'error'] + opts + ['-i', str(path), '-f', 'null', '-']
+        cmd = [get_ffmpeg_path(), '-v', 'error'] + opts + ['-i', media_arg(path), '-f', 'null', '-']
         if subprocess.run(cmd, capture_output=True).returncode == 0:
             return True
     return False

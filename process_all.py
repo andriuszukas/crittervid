@@ -126,7 +126,8 @@ def main():
     # otherwise easy to miss among the step's output. The report is this run's:
     # an earlier one was removed before the step
     if not args.dry_run and os.path.isfile(merge_summary):
-        with open(merge_summary, encoding='utf-8') as f:
+        # Paths in it can be in any encoding (Linux)
+        with open(merge_summary, encoding='utf-8', errors='replace') as f:
             for line in f:
                 if line.startswith('WARNING'):
                     print(f"Merge {line.rstrip()}")

@@ -10,7 +10,7 @@ import tempfile
 import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import platform
-from ffmpeg_helper import get_ffmpeg_path
+from ffmpeg_helper import PATH_TEXT, get_ffmpeg_path, media_arg
 import media_format
 
 INPUT_ROOT = Path('input/DCIM')
@@ -185,7 +185,7 @@ def record_format_command(video, audio, out_path, workdir):
     # closes them up; a raised threshold keeps real pauses in the recording
     return [FFMPEG_PATH, '-y', '-dts_delta_threshold', '1000000', '-i', str(video_path),
             '-f', 's16le', '-ar', str(media_format.AUDIO_SAMPLE_RATE), '-i', str(audio_path),
-            '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', str(out_path)]
+            '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', media_arg(out_path)]
 
 
 def report(summary, msg):
@@ -275,11 +275,11 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
             return True
         # Files that aren't in the cameras' record format: let FFmpeg read them directly
         if copy_mode:
-            cmd = [FFMPEG_PATH, '-y', '-i', str(media_path), '-c:v', 'copy'] + FALLBACK_OUTPUT + [str(tmp_path)]
+            cmd = [FFMPEG_PATH, '-y', '-i', media_arg(media_path), '-c:v', 'copy'] + FALLBACK_OUTPUT + [media_arg(tmp_path)]
             method = 'copy'
         else:
             input_opts, output_opts = ACCEL_OPTIONS[accel]
-            cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', str(media_path)] + output_opts + FALLBACK_OUTPUT + [str(tmp_path)]
+            cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', media_arg(media_path)] + output_opts + FALLBACK_OUTPUT + [media_arg(tmp_path)]
             method = accel
         result = run_ffmpeg(cmd)
         if result.returncode != 0:
@@ -312,8 +312,16 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
 def list_entries(paths):
     """Paths for the failed-files list: absolute, each once. Paths from lists of
     earlier versions are relative to where those ran, as before; making them
-    absolute too lets them match this run's (case-insensitively on Windows)."""
-    return [str(p) for p in dict.fromkeys(Path(os.path.abspath(p)) for p in paths)]
+    absolute too lets them match this run's (case-insensitively on Windows).
+    The list has one path per line, so a path with a line break is left out,
+    with a warning."""
+    entries = []
+    for p in dict.fromkeys(Path(os.path.abspath(p)) for p in paths):
+        if '\n' in str(p) or '\r' in str(p):
+            print(f"WARNING: {p} can't be listed for --retry-failed: its path has a line break; rename it")
+        else:
+            entries.append(str(p))
+    return entries
 
 
 def group_by_event(paths):
@@ -391,7 +399,7 @@ def main():
     # Determine which files to process
     if args.retry_failed and FAILED_FILES.exists():
         print(f"Retrying failed files from {FAILED_FILES}...")
-        with open(FAILED_FILES, 'r', encoding='utf-8') as f:
+        with open(FAILED_FILES, 'r', **PATH_TEXT) as f:
             media_files = [Path(p) for p in list_entries(line.strip() for line in f if line.strip())]
         print(f"Found {len(media_files)} failed files to retry.")
     else:
@@ -467,7 +475,7 @@ def main():
 
     # Write results
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    with open(SUMMARY_REPORT, 'w', encoding='utf-8') as f:
+    with open(SUMMARY_REPORT, 'w', **PATH_TEXT) as f:
         for line in summary:
             f.write(line + '\n')
     print(f"Summary report written to {SUMMARY_REPORT}")
@@ -480,18 +488,18 @@ def main():
         # its own failures
         listed = failed_files
         if not (args.retry_failed or retry_count) and FAILED_FILES.exists():
-            with open(FAILED_FILES, encoding='utf-8') as f:
+            with open(FAILED_FILES, **PATH_TEXT) as f:
                 listed = [line.strip() for line in f if line.strip()] + failed_files
         listed = list_entries(listed)
         if listed:
-            with open(FAILED_FILES, 'w', encoding='utf-8') as f:
+            with open(FAILED_FILES, 'w', **PATH_TEXT) as f:
                 f.writelines(entry + '\n' for entry in listed)
             print(f"Failed files list written to {FAILED_FILES} ({len(listed)} files)")
         elif args.retry_failed or retry_count:
             FAILED_FILES.unlink(missing_ok=True)   # everything it was retrying is done
         print("Conversion stopped before it finished; run it again to convert the rest.")
     elif failed_files:
-        with open(FAILED_FILES, 'w', encoding='utf-8') as f:
+        with open(FAILED_FILES, 'w', **PATH_TEXT) as f:
             f.writelines(entry + '\n' for entry in list_entries(failed_files))
         print(f"Failed files list written to {FAILED_FILES} ({len(failed_files)} files)")
         print(f"To retry failed files, run: python convert_media.py --retry-failed")

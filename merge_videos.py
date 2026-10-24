@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import re
 import argparse
 import sys
-from ffmpeg_helper import get_ffmpeg_path, get_ffprobe_path
+from ffmpeg_helper import PATH_TEXT, get_ffmpeg_path, get_ffprobe_path, media_arg
 import media_format
 
 OUTPUT_ROOT = Path('output')
@@ -80,7 +80,7 @@ def video_end(path):
     if not FFPROBE_PATH:
         return None
     result = subprocess.run([FFPROBE_PATH, '-v', 'error', '-select_streams', 'v:0',
-                             '-show_entries', 'stream=start_time,duration', '-of', 'csv=p=0', str(path)],
+                             '-show_entries', 'stream=start_time,duration', '-of', 'csv=p=0', media_arg(path)],
                             capture_output=True, text=True, encoding='utf-8', errors='replace')
     try:
         start, length = (float(x) for x in result.stdout.strip().split(','))
@@ -105,9 +105,17 @@ def merge_group(period_start, files, summary, record, split_idx=None, total_spli
     tmp_path = out_dir / (out_name + '.part')
     # Create filelist.txt for ffmpeg concat
     filelist_path = out_dir / f"filelist_{start_str}.txt"
-    # FFmpeg reads the list as UTF-8, and a quote inside a quoted path must be
-    # written as '\''
-    with open(filelist_path, 'w', encoding='utf-8') as f:
+    # The list has one path per line, so a path with a line break can't be in it
+    broken = [file for _, file in files if '\n' in str(file) or '\r' in str(file)]
+    if broken:
+        error_msg = (f"Failed to merge {out_name}: {broken[0]} has a line break in its path, "
+                     f"which FFmpeg's list of files to join can't hold; rename it")
+        print(error_msg)
+        summary.append(f"ERROR: {error_msg}")
+        return False
+    # FFmpeg reads the list as UTF-8 (other bytes as they are), and a quote inside
+    # a quoted path must be written as '\''
+    with open(filelist_path, 'w', **PATH_TEXT) as f:
         for _, file in files:
             escaped = str(file.resolve()).replace("'", "'\\''")
             # inpoint 0: start each file at its own time zero. Without it, the AAC
@@ -122,7 +130,7 @@ def merge_group(period_start, files, summary, record, split_idx=None, total_spli
                 f.write(f"outpoint {end:.6f}\nduration {end:.6f}\n")
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
-    cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', str(filelist_path), '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', str(tmp_path)]
+    cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', media_arg(tmp_path)]
     result = subprocess.run(cmd, capture_output=True)
     filelist_path.unlink()
     if result.returncode != 0:
@@ -308,7 +316,7 @@ def main():
             write_contents(day_dir, record, summary)
     # Write summary report
     MERGED_ROOT.mkdir(parents=True, exist_ok=True)
-    with open(SUMMARY_REPORT, 'w', encoding='utf-8') as f:
+    with open(SUMMARY_REPORT, 'w', **PATH_TEXT) as f:
         for line in summary:
             f.write(line + '\n')
     print(f"Summary report written to {SUMMARY_REPORT}")

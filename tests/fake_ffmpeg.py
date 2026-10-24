@@ -90,9 +90,11 @@ def main():
         data = b''
         if os.environ.get('FAKE_FFMPEG_LOG'):
             copy = f"{os.environ['FAKE_FFMPEG_LOG']}-concat.{os.getpid()}.{uuid.uuid4().hex}"
-            with open(in_path, encoding='utf-8') as filelist, open(copy, 'w', encoding='utf-8') as f:
+            with open(in_path, encoding='utf-8', errors='surrogateescape') as filelist, \
+                    open(copy, 'w', encoding='utf-8', errors='surrogateescape') as f:
                 f.write(filelist.read())
-        with open(in_path, encoding='utf-8') as filelist:
+        # Like FFmpeg, take bytes that aren't UTF-8 as they are
+        with open(in_path, encoding='utf-8', errors='surrogateescape') as filelist:
             for line in filelist:
                 # Directives such as `inpoint 0` apply to the file before them
                 if line.split(' ', 1)[0] in ('inpoint', 'outpoint', 'duration'):
