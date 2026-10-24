@@ -111,7 +111,7 @@ def find_media_files(root):
             if filename.endswith('.media'):
                 yield Path(dirpath) / filename
 
-EVENT_FOLDER = re.compile(r'\d{10,}_\d{4}')
+EVENT_FOLDER = re.compile(r'\d{10,}_\d+')
 
 
 def read_event(segments):
