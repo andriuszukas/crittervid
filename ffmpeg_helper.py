@@ -5,6 +5,17 @@ import os
 import sys
 import shutil
 
+def media_arg(path):
+    """A file path as FFmpeg and ffprobe should get it: absolute, so a colon in a
+    relative path (e.g. cam:2/...) isn't taken for a protocol such as cam:."""
+    return os.path.abspath(path)
+
+
+# Paths can be in any encoding on Linux; Python keeps bytes that aren't UTF-8 as
+# surrogates, and this error handler writes them back as the same bytes
+PATH_TEXT = {'encoding': 'utf-8', 'errors': 'surrogateescape'}
+
+
 def get_ffmpeg_path():
     """
     Find ffmpeg executable in the following order:
