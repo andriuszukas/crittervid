@@ -89,16 +89,29 @@ def video_end(path):
         return None
 
 
-def merge_group(period_start, files, summary, record, split_idx=None, total_splits=None):
-    out_dir = MERGED_ROOT / period_start.strftime('%Y/%m/%d')
+MINUTES_PER_DAY = 24 * 60
+
+
+def split_day(day_start, files, n):
+    """How --splits-per-day n divides a day: into n equal time windows (to the
+    minute), part k holding the files whose event starts in its window, however
+    long the event runs. Returns [(k, window start, window end, files)] for
+    k = 1..n; a window with no events has no files."""
+    bounds = [day_start + timedelta(minutes=k * MINUTES_PER_DAY // n) for k in range(n + 1)]
+    return [(k + 1, bounds[k], bounds[k + 1], [(dt, f) for dt, f in files if bounds[k] <= dt < bounds[k + 1]])
+            for k in range(n)]
+
+
+def part_name(start, end, k, n):
+    """The merged file for part k of n, covering start to end."""
+    return f"merged_{start:%Y%m%d_%H%M}_{end:%Y%m%d_%H%M}_part{k}of{n}.mp4"
+
+
+def merge_group(start, end, files, summary, record, k, n):
+    out_dir = MERGED_ROOT / start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
-    start_str = period_start.strftime('%Y%m%d_%H%M')
-    end_dt = period_start + timedelta(hours=24 // (total_splits or 1))
-    end_str = end_dt.strftime('%Y%m%d_%H%M')
-    if split_idx is not None and total_splits is not None:
-        out_name = f"merged_{start_str}_{end_str}_part{split_idx+1}of{total_splits}.mp4"
-    else:
-        out_name = f"merged_{start_str}_{end_str}.mp4"
+    start_str = start.strftime('%Y%m%d_%H%M')
+    out_name = part_name(start, end, k, n)
     out_path = out_dir / out_name
     # Write to a temp file and rename on success, so a failed merge never leaves
     # a broken file that looks like a finished one
@@ -125,9 +138,9 @@ def merge_group(period_start, files, summary, record, split_idx=None, total_spli
             # and the video's last frame has an estimated length, so the two rarely
             # end together; left to itself, FFmpeg starts the next file after one
             # or the other depending on the version, which adds up over many files
-            end = video_end(file)
-            if end:
-                f.write(f"outpoint {end:.6f}\nduration {end:.6f}\n")
+            video_stop = video_end(file)
+            if video_stop:
+                f.write(f"outpoint {video_stop:.6f}\nduration {video_stop:.6f}\n")
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
     cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', media_arg(tmp_path)]
@@ -264,8 +277,11 @@ def main():
             stream.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description="Merge converted .mp4 files into one or more clips per day.")
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory containing .mp4 files to merge (default: output)')
-    parser.add_argument('--splits-per-day', type=int, default=1, help='Number of merged .mp4 files to create per day (default: 1, i.e. all of a day\'s files merged into one).')
+    parser.add_argument('--splits-per-day', type=int, default=1, help='Number of equal time windows to divide each day into, one merged .mp4 file per window '
+                             'that has events (default: 1, i.e. all of a day\'s files merged into one). 1 to 1440.')
     args = parser.parse_args()
+    if not 1 <= args.splits_per_day <= MINUTES_PER_DAY:
+        parser.error(f'--splits-per-day must be 1 to {MINUTES_PER_DAY} (windows are whole minutes)')
 
     # Update global paths based on arguments
     global OUTPUT_ROOT, MERGED_ROOT, SUMMARY_REPORT
@@ -292,19 +308,15 @@ def main():
         if (day_dir.is_dir() and unset_clock_day(day_dir.relative_to(MERGED_ROOT).as_posix())
                 and any(MERGED_NAME.fullmatch(f.name) for f in day_dir.iterdir())):
             warn(f"{day_dir} {UNSET_CLOCK_MERGES}")
+    n = args.splits_per_day
     for day_start, files in groups.items():
-        n = max(1, args.splits_per_day)
-        total = len(files)
-        split_size = (total + n - 1) // n  # ceil division
         day_dir = MERGED_ROOT / day_start.strftime('%Y/%m/%d')
         record = read_contents(day_dir)
         written, day_failed = set(), False
-        for i in range(n):
-            split_files = files[i*split_size:(i+1)*split_size]
+        for k, start, end, split_files in split_day(day_start, files, n):
             if not split_files:
                 continue
-            split_period_start = day_start + timedelta(hours=(i * 24 // n))
-            out_path = merge_group(split_period_start, split_files, summary, record, split_idx=i, total_splits=n)
+            out_path = merge_group(start, end, split_files, summary, record, k, n)
             if out_path:
                 written.add(out_path)
             else:

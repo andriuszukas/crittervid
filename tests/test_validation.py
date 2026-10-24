@@ -4,6 +4,7 @@ import os
 import shutil
 import stat
 import sys
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -195,8 +196,8 @@ def test_validate_reports_a_merged_part_missing_footage(ws):
 
 def test_validate_checks_each_set_of_merged_files_and_warns_about_leftovers(ws):
     # A day merged with one split setting, then again with another
-    event_file(ws, '1790834400_0010.mp4', b'OKa')
-    event_file(ws, '1790835000_0010.mp4', b'OKb')
+    event_file(ws, '1790834400_0010.mp4', b'OKa')   # 06:00
+    event_file(ws, '1790863200_0010.mp4', b'OKb')   # 14:00
     merged_file(ws, b'OKOKaOKb')
     merged_file(ws, b'OKOKa', 'merged_20261001_0000_20261001_1200_part1of2.mp4')
     merged_file(ws, b'OKOKb', 'merged_20261001_1200_20261002_0000_part2of2.mp4')
@@ -208,8 +209,8 @@ def test_validate_checks_each_set_of_merged_files_and_warns_about_leftovers(ws):
 
 
 def test_validate_fails_when_a_set_of_merged_files_is_short(ws):
-    event_file(ws, '1790834400_0010.mp4', b'OKa')
-    event_file(ws, '1790835000_0010.mp4', b'OKb')
+    event_file(ws, '1790834400_0010.mp4', b'OKa')   # 06:00
+    event_file(ws, '1790863200_0010.mp4', b'OKb')   # 14:00, in part 2
     merged_file(ws, b'OKOKaOKb')
     merged_file(ws, b'OKOKa', 'merged_20261001_0000_20261001_1200_part1of2.mp4')
 
@@ -253,7 +254,7 @@ def test_merge_ends_each_file_where_its_video_ends(ws):
 
 def test_merging_again_with_other_splits_removes_the_earlier_files(ws):
     ws.add_media('0001.media', b'a')
-    ws.add_media('0002.media', b'b')
+    ws.add_afternoon_media('0001.media', b'b')
     assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
     assert ws.run('merge_videos.py').returncode == 0
     assert [f.name for f in ws.files('merged_*.mp4')] == ['merged_20251001_0000_20251002_0000_part1of1.mp4']
@@ -364,22 +365,22 @@ def test_validate_reports_merged_audio_longer_than_its_video(ws):
     assert any('audio is 1.00 s long but the video is 2.00 s long' in line for line in lines(result, 'ERROR'))
 
 
-def test_validate_splits_parts_like_the_merge_with_uneven_counts(ws):
-    # 3 events in 2 parts: the merge puts 2 in the first and 1 in the second
-    for i, content in enumerate((b'OKa', b'OKb', b'OKc')):
-        event_file(ws, f'{1790834400 + 600 * i}_0010.mp4', content)
-    merged_file(ws, b'OKOKaOKb', 'merged_20261001_0000_20261001_1200_part1of2.mp4')
-    merged_file(ws, b'OKOKc', 'merged_20261001_1200_20261002_0000_part2of2.mp4')
+def test_validate_splits_parts_by_time_like_the_merge(ws):
+    # An event at 06:00 belongs in the morning part, 14:00 and 14:10 in the afternoon
+    for start, content in ((1790834400, b'OKa'), (1790863200, b'OKb'), (1790863800, b'OKc')):
+        event_file(ws, f'{start}_0010.mp4', content)
+    merged_file(ws, b'OKOKa', 'merged_20261001_0000_20261001_1200_part1of2.mp4')
+    merged_file(ws, b'OKOKbOKc', 'merged_20261001_1200_20261002_0000_part2of2.mp4')
 
     assert ws.run('validate_output.py').returncode == 0
 
-    # The same total split 1 + 2 doesn't match how the merge splits
-    merged_file(ws, b'OKOKa', 'merged_20261001_0000_20261001_1200_part1of2.mp4')
-    merged_file(ws, b'OKOKbOKc', 'merged_20261001_1200_20261002_0000_part2of2.mp4')
+    # Splitting by count instead (2 + 1) doesn't match the times of the events
+    merged_file(ws, b'OKOKaOKb', 'merged_20261001_0000_20261001_1200_part1of2.mp4')
+    merged_file(ws, b'OKOKc', 'merged_20261001_1200_20261002_0000_part2of2.mp4')
     result = ws.run('validate_output.py')
 
     assert result.returncode == 1
-    assert 'part 1 of 2 is 1.00 s long, but its 2 converted files add up to 2.00 s' in result.stdout
+    assert 'part 1 of 2 is 2.00 s long, but its 1 converted files add up to 1.00 s' in result.stdout
 
 
 def test_validate_warns_about_a_part_number_the_merge_doesnt_write(ws):
@@ -390,3 +391,25 @@ def test_validate_warns_about_a_part_number_the_merge_doesnt_write(ws):
     result = ws.run('validate_output.py')
 
     assert 'part 3 of 2 is not a part the merge writes' in result.stdout
+
+
+def test_validate_warns_about_a_part_named_for_other_times(ws):
+    # Earlier versions named part 2 of 5 as 04:00-08:00 (24 // 5 hours each);
+    # it covers 04:48 to 09:36
+    event_file(ws, '1790834400_0010.mp4', b'OKa')   # 06:00
+    merged_file(ws, b'OKOKa', 'merged_20261001_0400_20261001_0800_part2of5.mp4')
+
+    result = ws.run('validate_output.py')
+
+    assert 'part 2 of 5 covers 04:48 to 09:36, not the times in its name' in result.stdout
+
+
+@pytest.mark.parametrize('n', [1, 2, 5, 7, 24, 1440])
+def test_split_windows_cover_the_day_without_gaps(n):
+    import merge_videos
+    day = datetime(2026, 10, 1)
+    windows = merge_videos.split_day(day, [], n)
+    assert [k for k, _, _, _ in windows] == list(range(1, n + 1))
+    assert windows[0][1] == day and windows[-1][2] == day + timedelta(days=1)
+    assert all(a[2] == b[1] for a, b in zip(windows, windows[1:]))
+    assert all(start < end for _, start, end, _ in windows)

@@ -15,6 +15,7 @@ SCRIPTS = ['ffmpeg_helper.py', 'media_format.py', 'convert_media.py', 'merge_vid
 
 # Matches the camera layout: DCIM/YYYY/MM/DD/<unixtimestamp>_<duration>/
 GROUP_DIR = Path('input/DCIM/2026/10/01/1759300000_0001')
+AFTERNOON_DIR = Path('input/DCIM/2026/10/01/1759330000_0001')
 
 
 class Workspace:
@@ -26,6 +27,13 @@ class Workspace:
 
     def add_media(self, name, content):
         path = self.root / GROUP_DIR / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return path
+
+    def add_afternoon_media(self, name, content):
+        """A segment of a second event that day, at 14:46 UTC (GROUP_DIR's is at 06:26)."""
+        path = self.root / AFTERNOON_DIR / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         return path
