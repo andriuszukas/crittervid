@@ -194,7 +194,7 @@ def check_merged_days(converted, merged, probes):
     for day_start, files in sorted(merge_videos.group_files_by_day(converted).items()):
         day = day_start.strftime('%Y/%m/%d')
         parts = found.pop(day, [])
-        files = [f for _, f in files]
+        dated, files = files, [f for _, f in files]
         if any(check_file(f, probes[f]) for f in files):
             continue   # its unreadable or unusable files are reported already
         if not parts:
@@ -214,15 +214,17 @@ def check_merged_days(converted, merged, probes):
                 [(_, part)] = set_parts.items()
                 problems += check_merged_part(f'merged {day}', part, [probes[f] for f in files], probes)
                 continue
-            size = -(-len(files) // n)   # the merge's split: ceil(files / N) per part
-            for k in range(1, n + 1):
-                chunk = files[(k - 1) * size:k * size]
+            for k, start, end, chunk in merge_videos.split_day(day_start, dated, n):
+                chunk = [f for _, f in chunk]
                 part = set_parts.get(k)
                 if chunk and part is None:
                     problems.append(f'ERROR: merged {day}: part {k} of {n} is missing')
                 elif part is not None and not chunk:
                     problems.append(f'WARNING: {part}: no converted files belong in this part')
                 elif part is not None:
+                    if part.name != merge_videos.part_name(start, end, k, n):
+                        problems.append(f'WARNING: {part}: part {k} of {n} covers {start:%H:%M} to {end:%H:%M}, '
+                                        f'not the times in its name (made by an earlier version? merge again)')
                     problems += check_merged_part(f'merged {day} part {k} of {n}', part,
                                                   [probes[f] for f in chunk], probes)
             problems += [f'WARNING: {part}: part {k} of {n} is not a part the merge writes'

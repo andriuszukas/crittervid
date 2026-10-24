@@ -16,8 +16,10 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
 - **Hardware acceleration** — only used for `.media` files that aren't in the cameras' usual
   record format, which FFmpeg has to re-encode: NVIDIA (CUDA), Intel (QSV), AMD (AMF), or CPU.
   Auto-detection can't detect NVIDIA on Python 3.12+ ([#2](https://github.com/andriuszukas/crittervid/issues/2)), so choose your GPU explicitly.
-- **Merge** converted clips into one or more files per day (`--splits-per-day`). Merging a day
-  again with a different number replaces that day's earlier merged files, unless they hold
+- **Merge** converted clips into one or more files per day. `--splits-per-day N` divides each day
+  into N equal time windows (to the minute; 2 gives 00:00–12:00 and 12:00–24:00), and each window
+  with events becomes one file named after its window. An event belongs to the window it starts in.
+  Merging a day again with a different number replaces that day's earlier merged files, unless they hold
   footage the new ones don't (e.g. after deleting converted files to save space). Each day's
   `merged_contents.json` records which events each merged file holds; merged files made by
   earlier versions have no record, so they're kept and you're told about them.

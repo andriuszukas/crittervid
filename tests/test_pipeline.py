@@ -298,7 +298,7 @@ def merged_dir(ws):
 
 def test_merge_only_removes_files_it_wrote_itself(ws):
     ws.add_media('0001.media', b'good')
-    ws.add_media('0002.media', b'more')
+    ws.add_afternoon_media('0002.media', b'more')
     assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
     assert ws.run('merge_videos.py').returncode == 0
     day = merged_dir(ws)
@@ -721,3 +721,32 @@ def test_a_failed_path_with_a_line_break_is_left_out_of_the_retry_list(ws):
     listed = (ws.root / 'output' / 'conversion_failed.txt').read_text(encoding='utf-8').splitlines()
     # The other event isn't in the record format, so its segments are listed
     assert sorted(listed) == [str(ws.root / GROUP_DIR / '0001.media'), str(ws.root / GROUP_DIR / '0002.media')]
+
+
+# --- Splitting a day by time (#7) ---
+
+def test_splits_divide_the_day_into_equal_time_windows(ws):
+    # Events at 06:26 and 14:46: with 5 windows of 4 h 48 min, they fall in the
+    # second and fourth; the others have no events and get no file
+    ws.add_media('0001.media', b'morning')
+    ws.add_afternoon_media('0001.media', b'afternoon')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+
+    result = ws.run('merge_videos.py', '--splits-per-day', '5')
+
+    assert result.returncode == 0, result.stdout
+    parts = {f.name: f.read_bytes() for f in ws.files('merged_*.mp4')}
+    assert parts == {
+        'merged_20251001_0448_20251001_0936_part2of5.mp4': b'OKOKmorning',
+        'merged_20251001_1424_20251001_1912_part4of5.mp4': b'OKOKafternoon'}
+    result = ws.run('validate_output.py')
+    assert result.returncode == 0, result.stdout
+    assert 'WARNING' not in result.stdout
+
+
+@pytest.mark.parametrize('splits', ['0', '1441'])
+def test_merge_rejects_splits_that_dont_make_whole_minute_windows(ws, splits):
+    result = ws.run('merge_videos.py', '--splits-per-day', splits)
+
+    assert result.returncode == 2
+    assert '--splits-per-day must be 1 to 1440' in result.stderr
