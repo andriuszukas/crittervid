@@ -719,4 +719,5 @@ def test_a_failed_path_with_a_line_break_is_left_out_of_the_retry_list(ws):
     assert result.returncode == 1
     assert "can't be listed for --retry-failed" in result.stdout
     listed = (ws.root / 'output' / 'conversion_failed.txt').read_text(encoding='utf-8').splitlines()
-    assert listed == [str(ws.root / GROUP_DIR)]
+    # The other event isn't in the record format, so its segments are listed
+    assert sorted(listed) == [str(ws.root / GROUP_DIR / '0001.media'), str(ws.root / GROUP_DIR / '0002.media')]
