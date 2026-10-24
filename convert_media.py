@@ -312,8 +312,16 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
 def list_entries(paths):
     """Paths for the failed-files list: absolute, each once. Paths from lists of
     earlier versions are relative to where those ran, as before; making them
-    absolute too lets them match this run's (case-insensitively on Windows)."""
-    return [str(p) for p in dict.fromkeys(Path(os.path.abspath(p)) for p in paths)]
+    absolute too lets them match this run's (case-insensitively on Windows).
+    The list has one path per line, so a path with a line break is left out,
+    with a warning."""
+    entries = []
+    for p in dict.fromkeys(Path(os.path.abspath(p)) for p in paths):
+        if '\n' in str(p) or '\r' in str(p):
+            print(f"WARNING: {p} can't be listed for --retry-failed: its path has a line break; rename it")
+        else:
+            entries.append(str(p))
+    return entries
 
 
 def group_by_event(paths):

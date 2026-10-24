@@ -685,6 +685,13 @@ def test_paths_that_arent_utf8_are_kept_in_reports_lists_and_merges(ws):
     [merged] = (ws.root / out / 'merged').rglob('merged_*.mp4')
     assert merged.read_bytes() == b'OKOKgoodOKfixed'
 
+    # The whole pipeline, which also reads the merge's report (with a warning
+    # naming a path that isn't UTF-8 in it)
+    (ws.root / out / 'merged' / '2025' / '10' / '01' / 'merged_contents.json').unlink()
+    result = ws.run('process_all.py', *args, '--splits-per-day', '2', '--no-validate')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'Merge WARNING: kept 1 merged files' in result.stdout
+
 
 @pytest.mark.skipif(os.name == 'nt', reason="Windows doesn't allow line breaks in file names")
 def test_merge_explains_a_path_with_a_line_break(ws):
@@ -697,3 +704,19 @@ def test_merge_explains_a_path_with_a_line_break(ws):
     assert result.returncode == 1
     assert 'line break' in result.stdout and 'Traceback' not in result.stdout + result.stderr
     assert not list((ws.root / out / 'merged').rglob('merged_*.mp4'))
+
+
+@pytest.mark.skipif(os.name == 'nt', reason="Windows doesn't allow line breaks in file names")
+def test_a_failed_path_with_a_line_break_is_left_out_of_the_retry_list(ws):
+    ws.add_media('0001.media', b'BAD')
+    ws.add_media('0002.media', b'BAD')
+    broken = ws.root / 'input' / 'DCIM' / '2025' / '10' / '01' / '1759300001_0001'
+    broken.mkdir(parents=True)
+    (broken / 'bad\nname.media').write_bytes(b'BAD')
+
+    result = ws.run('convert_media.py', '--accel', 'cpu')
+
+    assert result.returncode == 1
+    assert "can't be listed for --retry-failed" in result.stdout
+    listed = (ws.root / 'output' / 'conversion_failed.txt').read_text(encoding='utf-8').splitlines()
+    assert listed == [str(ws.root / GROUP_DIR)]
