@@ -105,7 +105,8 @@ output/
 
 Every event file has an audio track; it's silent if the camera recorded no sound. Every output
 file records when its footage starts as its `creation_time` (UTC), which players and tools such as
-Timelapse show; events recorded before the camera's clock was set get none. Event
+Timelapse show; events recorded before the camera's clock was set get none. Files made by earlier
+versions get it once they're made again (convert after deleting them; merge with `--force`). Event
 folders in which no file is in the cameras' record format are converted one segment at a time
 instead, into `YYYY/MM/DD/<timestamp>_<duration>/` folders. An event file isn't redone if more
 segments are added to its folder later; delete it to convert the event again.
