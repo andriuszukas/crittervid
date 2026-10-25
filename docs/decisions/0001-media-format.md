@@ -30,7 +30,7 @@ Each `.media` file is a sequence of records. Every byte of every sampled file is
 | 4–7 | payload length |
 | 8–11 | a millisecond value (meaning not confirmed) |
 | 12–15 | always 0 |
-| 16–23 | **timestamp, microseconds** |
+| 16–23 | **timestamp, microseconds** on the camera's own clock, not since 1970: an event's first record is a few seconds in. Only differences between them matter; the event's real start (UTC) is in its folder name |
 
 - **Video:** H.264 High profile, 2304×1296, in Annex B form. It runs at **about 14.7 fps** on average, with frames 50 or 100 ms apart (variable), and a keyframe every ~4.5 s.
 - **Audio:** **PCM signed 16-bit, 8 kHz, mono**, in 640-byte records every 40 ms.

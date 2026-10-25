@@ -28,6 +28,14 @@ MERGED_NAME = re.compile(r'merged_\d{8}_\d{4}_\d{8}_\d{4}(?:_part(\d+)of(\d+))?\
 # was made from, so older merged files are only deleted when nothing is lost
 CONTENTS_NAME = 'merged_contents.json'
 
+def file_start(path):
+    """When a converted file's footage starts, in Unix seconds, from its name: the
+    event's start, plus the offset for a per-segment file."""
+    m = FILENAME_RE.search(str(path))
+    offset = path.stem.split('_')[2] if path.stem.count('_') == 2 else '0'
+    return int(m.group(1)) + int(offset)
+
+
 def find_mp4_files(root):
     for dirpath, _, filenames in os.walk(root):
         for filename in filenames:
@@ -163,7 +171,8 @@ def merge_group(start, end, files, summary, record, k, n, force=False):
                 f.write(f"outpoint {video_stop:.6f}\nduration {video_stop:.6f}\n")
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
-    cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', media_arg(tmp_path)]
+    cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac',
+           *media_format.creation_time_args(file_start(files[0][1])), '-f', 'mp4', media_arg(tmp_path)]
     result = subprocess.run(cmd, capture_output=True)
     filelist_path.unlink()
     if result.returncode != 0:

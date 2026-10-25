@@ -169,13 +169,16 @@ def read_event(segments):
     return video, audio, notes
 
 
-def record_format_command(video, audio, out_path, workdir):
+def record_format_command(video, audio, out_path, workdir, start=None):
     """FFmpeg command that writes video frames and audio records into an MP4
     without re-encoding the video.
 
     Each frame keeps the timestamp the camera recorded. The audio, placed by its
     own timestamps from the first frame to the end of the last one, is encoded as
-    AAC; with no audio recorded it's silence, so every event file has audio."""
+    AAC; with no audio recorded it's silence, so every event file has audio.
+    `start` (Unix seconds) is recorded as the file's creation_time: it comes from
+    the event folder's name, as the frames' timestamps count from a point of the
+    camera's own, not from 1970."""
     video_path = workdir / 'video.ts'
     video_path.write_bytes(media_format.video_ts(video))
     last_frame = video[-1][0] - video[-2][0] if len(video) > 1 else 66_667
@@ -185,7 +188,8 @@ def record_format_command(video, audio, out_path, workdir):
     # closes them up; a raised threshold keeps real pauses in the recording
     return [FFMPEG_PATH, '-y', '-dts_delta_threshold', '1000000', '-i', str(video_path),
             '-f', 's16le', '-ar', str(media_format.AUDIO_SAMPLE_RATE), '-i', str(audio_path),
-            '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-f', 'mp4', media_arg(out_path)]
+            '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac',
+            *([] if start is None else media_format.creation_time_args(start)), '-f', 'mp4', media_arg(out_path)]
 
 
 def report(summary, msg):
@@ -215,7 +219,7 @@ def convert_event(event_dir, segments, summary, failed_files):
             return None
         out_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='crittervid-') as workdir:
-            cmd = record_format_command(video, audio, tmp_path, Path(workdir))
+            cmd = record_format_command(video, audio, tmp_path, Path(workdir), start=int(folder.split('_')[0]))
             result = run_ffmpeg(cmd)
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
@@ -273,13 +277,16 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
             print(skip_msg)
             summary.append(skip_msg)
             return True
-        # Files that aren't in the cameras' record format: let FFmpeg read them directly
+        # Files that aren't in the cameras' record format: let FFmpeg read them directly.
+        # A segment starts at the event's start plus its offset (its file name)
+        offset = int(media_path.stem) if media_path.stem.isdigit() else 0
+        output = media_format.creation_time_args(int(timestamp) + offset) + FALLBACK_OUTPUT
         if copy_mode:
-            cmd = [FFMPEG_PATH, '-y', '-i', media_arg(media_path), '-c:v', 'copy'] + FALLBACK_OUTPUT + [media_arg(tmp_path)]
+            cmd = [FFMPEG_PATH, '-y', '-i', media_arg(media_path), '-c:v', 'copy'] + output + [media_arg(tmp_path)]
             method = 'copy'
         else:
             input_opts, output_opts = ACCEL_OPTIONS[accel]
-            cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', media_arg(media_path)] + output_opts + FALLBACK_OUTPUT + [media_arg(tmp_path)]
+            cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', media_arg(media_path)] + output_opts + output + [media_arg(tmp_path)]
             method = accel
         result = run_ffmpeg(cmd)
         if result.returncode != 0:

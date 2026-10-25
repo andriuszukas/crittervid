@@ -23,6 +23,7 @@ HEADER = struct.Struct('<IIIIQ')
 # 1.75:1 ratio seen on real cards (about 14.7 fps)
 FRAME_GAPS_US = (50_000, 100_000, 50_000, 50_000, 100_000, 50_000, 100_000, 50_000, 50_000, 100_000, 50_000)
 KEYFRAME_EVERY = 66                 # frames
+CAMERA_CLOCK_START_US = 100_934_253  # an event's first record on the camera's clock (late enough for leftovers_first_s)
 AUDIO_RECORD_US = 40_000
 AUDIO_RECORD_BYTES = 640            # 40 ms of 8 kHz 16-bit mono
 BURST_RECORD_US = 20_000            # zero-filled records in a burst are this far apart
@@ -106,7 +107,10 @@ def write_event(dcim, start, seconds, segment_seconds=13, audio_offset_us=38_000
     - leftovers_first_s=S: the event starts S seconds before the rest of the
       footage, with no audio in between, with a keyframe that carries slices of an
       earlier picture in front of its parameter sets, as on real cards (#77)"""
-    t0 = int(start.timestamp()) * 1_000_000
+    # Records count microseconds from a point of the camera's own (on real cards
+    # the first frame is a few seconds in), not from 1970: the event's real start
+    # is only in the folder's name
+    t0 = CAMERA_CLOCK_START_US
     gap_start = t0 + int(gap[0] * 1_000_000) if gap else None
     gap_end = gap_start + int(gap[1] * 1_000_000) if gap else None
     stamps = [t0]
@@ -117,7 +121,7 @@ def write_event(dcim, start, seconds, segment_seconds=13, audio_offset_us=38_000
         stamps.append(stamp)
     frames = h264_frames(len(stamps), frame_size, large_frames=large_frames)
     duration = seconds if folder_seconds is None else folder_seconds
-    folder = Path(dcim) / start.strftime('%Y/%m/%d') / f'{int(start.timestamp())}_{duration:04d}'
+    folder = Path(dcim) / start.strftime('%Y/%m/%d') / f'{int(start.timestamp()):010d}_{duration:04d}'   # zero-padded, as cards do
     folder.mkdir(parents=True)
 
     # Split into segments, each starting with a keyframe, about segment_seconds long

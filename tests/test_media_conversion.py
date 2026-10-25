@@ -310,3 +310,23 @@ def test_validation_fails_a_merged_day_missing_an_event(real_ws):
 
     assert result.returncode == 1
     assert 'converted files add up to' in result.stdout
+
+
+def creation_time(path):
+    return probe(path, 'format_tags=creation_time')['format'].get('tags', {}).get('creation_time')
+
+
+def test_event_file_records_when_its_footage_starts(real_ws):
+    write_event(real_ws.root / 'input' / 'DCIM', START, 10)
+
+    convert(real_ws)
+
+    assert creation_time(only_output(real_ws)) == '2026-10-01T06:00:00.000000Z'
+
+
+def test_event_recorded_before_the_clock_was_set_gets_no_creation_time(real_ws):
+    write_event(real_ws.root / 'input' / 'DCIM', utc(1970, 1, 1, 3, 0), 10)
+
+    convert(real_ws)
+
+    assert creation_time(only_output(real_ws)) is None   # not a made-up date in 1970

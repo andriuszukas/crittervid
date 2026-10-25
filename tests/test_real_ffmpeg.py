@@ -87,3 +87,22 @@ def test_full_pipeline_with_a_colon_in_a_relative_output_dir(real_ws):
     out = real_ws.root / 'cam:2'
     assert len(list(out.rglob('1759300000_0001_*.mp4'))) == 2
     assert len(list(out.rglob('merged_*.mp4'))) == 1
+
+
+def creation_time(path):
+    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format_tags=creation_time', '-of', 'json', str(path)],
+                         capture_output=True, text=True, check=True).stdout
+    return json.loads(out)['format'].get('tags', {}).get('creation_time')
+
+
+def test_segment_and_merged_files_record_when_their_footage_starts(real_ws):
+    # GROUP_DIR's event starts at 1759300000 (2025-10-01 06:26:40 UTC); segment
+    # 0013 is 13 s into it
+    make_clip(real_ws, '0000.media')
+    make_clip(real_ws, '0013.media')
+
+    assert real_ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+
+    assert creation_time(real_ws.converted('0013.media')) == '2025-10-01T06:26:53.000000Z'
+    [merged] = real_ws.files('merged_*.mp4')
+    assert creation_time(merged) == '2025-10-01T06:26:40.000000Z'
