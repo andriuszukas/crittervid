@@ -102,13 +102,16 @@ def test_card_converts_merges_and_validates(card_ws):
 
 def test_card_rerun_skips_finished_work(card_ws):
     assert run(card_ws).returncode == 0
-    converted = {f: f.stat().st_mtime_ns for f in event_files(card_ws)}
+    done = {f: f.stat().st_mtime_ns for f in event_files(card_ws) + card_ws.files('merged_*.mp4')}
+    merged = len(card_ws.files('merged_*.mp4'))
 
     result = run(card_ws)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.count('SKIPPED:') == len(EVENTS)
-    assert {f: f.stat().st_mtime_ns for f in converted} == converted
+    skipped = [line for line in result.stdout.splitlines() if line.startswith('SKIPPED:')]
+    assert sum('up to date' in line for line in skipped) == merged
+    assert len(skipped) == len(EVENTS) + merged
+    assert {f: f.stat().st_mtime_ns for f in done} == done   # nothing written again
 
 
 def test_card_splits_each_day(card_ws):

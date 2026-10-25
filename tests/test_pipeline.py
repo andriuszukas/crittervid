@@ -804,3 +804,79 @@ def test_merge_warns_about_mp4_files_it_doesnt_know(ws):
     assert "WARNING: 1 .mp4 files weren't merged" in result.stdout and 'holiday.mp4' in result.stdout
     [merged] = ws.files('merged_*.mp4')
     assert b'mine' not in merged.read_bytes()
+
+
+# --- Skipping merges that are up to date (#39) ---
+
+def merge_calls(ws):
+    return [call for call in ws.ffmpeg_calls() if 'concat' in call]
+
+
+def test_merge_skips_days_that_are_up_to_date(ws):
+    ws.env['FAKE_FFMPEG_LOG'] = str(ws.root / 'calls')
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [merged] = ws.files('merged_*.mp4')
+    made = merged.stat().st_mtime_ns
+
+    result = ws.run('merge_videos.py')
+
+    assert result.returncode == 0, result.stdout
+    assert 'is up to date' in result.stdout
+    assert len(merge_calls(ws)) == 1   # only the first run merged
+    assert merged.stat().st_mtime_ns == made
+    assert ws.run('validate_output.py').returncode == 0
+
+
+def test_merge_redoes_a_day_with_a_new_event(ws):
+    ws.env['FAKE_FFMPEG_LOG'] = str(ws.root / 'calls')
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    ws.add_afternoon_media('0001.media', b'later')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+
+    result = ws.run('merge_videos.py')
+
+    assert 'up to date' not in result.stdout
+    [merged] = ws.files('merged_*.mp4')
+    assert merged.read_bytes() == b'OKOKgoodOKlater'
+
+
+def test_merge_redoes_a_day_with_an_event_converted_again(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [merged] = ws.files('merged_*.mp4')
+    converted = ws.converted('0001.media')
+    converted.write_bytes(b'OKbetter')   # e.g. deleted and converted again by a newer version
+    later = merged.stat().st_mtime + 10
+    os.utime(converted, (later, later))
+
+    result = ws.run('merge_videos.py')
+
+    assert 'up to date' not in result.stdout
+    assert merged.read_bytes() == b'OKOKbetter'
+
+
+@pytest.mark.parametrize('how', ['force', 'no record'])
+def test_merge_redoes_a_day_when_forced_or_unrecorded(ws, how):
+    ws.env['FAKE_FFMPEG_LOG'] = str(ws.root / 'calls')
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    if how == 'no record':   # merged by an earlier version
+        (merged_dir(ws) / 'merged_contents.json').unlink()
+
+    result = ws.run('merge_videos.py', *(['--force'] if how == 'force' else []))
+
+    assert result.returncode == 0, result.stdout
+    assert 'up to date' not in result.stdout
+    assert len(merge_calls(ws)) == 2
+
+
+def test_process_all_passes_force_merge_on(ws):
+    result = ws.run('process_all.py', '--dry-run', '--force-merge')
+
+    assert 'merge_videos.py' in result.stdout and '--force' in result.stdout

@@ -19,7 +19,9 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
 - **Merge** converted clips into one or more files per day. `--splits-per-day N` divides each day
   into N equal time windows (to the minute; 2 gives 00:00–12:00 and 12:00–24:00), and each window
   with events becomes one file named after its window. An event belongs to the window it starts in.
-  Merging a day again with a different number replaces that day's earlier merged files, unless they hold
+  A part whose events haven't changed since it was merged is skipped on later runs (`--force`,
+  or `--force-merge` in `process_all.py`, merges everything again). Merging a day again with a
+  different number replaces that day's earlier merged files, unless they hold
   footage the new ones don't (e.g. after deleting converted files to save space). Each day's
   `merged_contents.json` records which events each merged file holds; merged files made by
   earlier versions have no record, so they're kept and you're told about them.
