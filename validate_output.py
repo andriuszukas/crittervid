@@ -302,6 +302,9 @@ def main():
     errors = sum(1 for line in problems if line.startswith('ERROR'))
     if errors:
         print(f'\nValidation found {errors} problem{"s" if errors != 1 else ""}.')
+        if any(line.startswith('ERROR') and 'merged' in line for line in problems):
+            print('Merged files are skipped while their events stay the same; to make them again, merge with '
+                  '--force (process_all.py --force-merge, or "Merge everything again" in the app).')
         return 1
     print('All output videos passed the checks.')
     return 0

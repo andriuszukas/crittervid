@@ -108,12 +108,31 @@ def part_name(start, end, k, n):
     return f"merged_{start:%Y%m%d_%H%M}_{end:%Y%m%d_%H%M}_part{k}of{n}.mp4"
 
 
-def merge_group(start, end, files, summary, record, k, n):
+def up_to_date(out_path, sources, files, record):
+    """Whether a merged file already holds exactly these converted files: the
+    record says it was made from them, and each is older than it. Strictly: some
+    drives keep times to only 2 s, so a file converted again just before the merge
+    can show the same time; a tie costs at most a needless merge, never a stale
+    file. A file replaced by hand isn't noticed."""
+    try:
+        made = out_path.stat().st_mtime
+        return record.get(out_path.name) == sources and all(f.stat().st_mtime < made for _, f in files)
+    except OSError:
+        return False
+
+
+def merge_group(start, end, files, summary, record, k, n, force=False):
     out_dir = MERGED_ROOT / start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
     start_str = start.strftime('%Y%m%d_%H%M')
     out_name = part_name(start, end, k, n)
     out_path = out_dir / out_name
+    sources = [source_name(f) for _, f in files]
+    if not force and up_to_date(out_path, sources, files, record):
+        msg = f"SKIPPED: {out_path} is up to date ({len(files)} files)"
+        print(msg)
+        summary.append(msg)
+        return out_path
     # Write to a temp file and rename on success, so a failed merge never leaves
     # a broken file that looks like a finished one
     tmp_path = out_dir / (out_name + '.part')
@@ -158,7 +177,6 @@ def merge_group(start, end, files, summary, record, k, n):
     # least what the file holds, which only ever keeps a file that could have
     # been deleted, never the other way round
     previous = record.get(out_name)
-    sources = [source_name(f) for _, f in files]
     record[out_name] = sorted(set(previous or []) | set(sources))
 
     def fail(reason):
@@ -177,6 +195,13 @@ def merge_group(start, end, files, summary, record, k, n):
     try:
         tmp_path.replace(out_path)
     except OSError as e:   # e.g. the old file is open in a video player
+        # The old file stays, so describe it again: its record mustn't claim the
+        # new events, or a later run could take it for up to date
+        if previous is None:
+            record.pop(out_name)
+        else:
+            record[out_name] = previous
+        write_contents(out_dir, record, summary)
         return fail(f"couldn't replace the earlier file: {e}")
     record[out_name] = sources   # written with the day's other changes
     success_msg = f"Merged {len(files)} files -> {out_path}"
@@ -280,6 +305,9 @@ def main():
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory containing .mp4 files to merge (default: output)')
     parser.add_argument('--splits-per-day', type=int, default=1, help='Number of equal time windows to divide each day into, one merged .mp4 file per window '
                              'that has events (default: 1, i.e. all of a day\'s files merged into one). 1 to 1440.')
+    parser.add_argument('--force', action='store_true', help='Merge every part again, including ones that are '
+                        'already up to date (by default they are skipped), e.g. after upgrading to a '
+                        'version that merges differently.')
     args = parser.parse_args()
     if not 1 <= args.splits_per_day <= MINUTES_PER_DAY:
         parser.error(f'--splits-per-day must be 1 to {MINUTES_PER_DAY} (windows are whole minutes)')
@@ -322,7 +350,7 @@ def main():
         for k, start, end, split_files in split_day(day_start, files, n):
             if not split_files:
                 continue
-            out_path = merge_group(start, end, split_files, summary, record, k, n)
+            out_path = merge_group(start, end, split_files, summary, record, k, n, force=args.force)
             if out_path:
                 written.add(out_path)
             else:
