@@ -12,6 +12,7 @@ is wrapped in MPEG-TS here, where every frame carries its own timestamp.
 """
 import collections
 import struct
+from datetime import datetime, timezone
 
 HEADER = struct.Struct('<IIIIQ')
 VIDEO_FRAME, VIDEO_KEYFRAME, AUDIO = 0, 1, 3
@@ -41,6 +42,16 @@ def clock_was_set(timestamp):
     """Whether an event's start time (Unix seconds) can be a real time, rather
     than one counted by a camera whose clock wasn't set (#73)."""
     return CLOCK_SET_FROM <= timestamp < CLOCK_SET_UNTIL
+
+
+def creation_time_args(seconds):
+    """FFmpeg options that record when a file's footage starts (Unix seconds) as
+    its creation_time, in UTC, which players and tools such as Timelapse show. None
+    for a time counted by a camera whose clock wasn't set (#73)."""
+    if not clock_was_set(seconds):
+        return []
+    stamp = datetime.fromtimestamp(seconds, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    return ['-metadata', f'creation_time={stamp}']
 
 
 class MediaFormatError(ValueError):
