@@ -110,8 +110,10 @@ def part_name(start, end, k, n):
 
 def up_to_date(out_path, sources, files, record):
     """Whether a merged file already holds exactly these converted files: the
-    record says it was made from them, and each is older than it (strictly, as
-    some drives keep times to only 2 s). A file replaced by hand isn't noticed."""
+    record says it was made from them, and each is older than it. Strictly: some
+    drives keep times to only 2 s, so a file converted again just before the merge
+    can show the same time; a tie costs at most a needless merge, never a stale
+    file. A file replaced by hand isn't noticed."""
     try:
         made = out_path.stat().st_mtime
         return record.get(out_path.name) == sources and all(f.stat().st_mtime < made for _, f in files)
