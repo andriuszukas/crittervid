@@ -110,10 +110,11 @@ def part_name(start, end, k, n):
 
 def up_to_date(out_path, sources, files, record):
     """Whether a merged file already holds exactly these converted files: the
-    record says it was made from them, and none was converted again since."""
+    record says it was made from them, and each is older than it (strictly, as
+    some drives keep times to only 2 s). A file replaced by hand isn't noticed."""
     try:
         made = out_path.stat().st_mtime
-        return record.get(out_path.name) == sources and all(f.stat().st_mtime <= made for _, f in files)
+        return record.get(out_path.name) == sources and all(f.stat().st_mtime < made for _, f in files)
     except OSError:
         return False
 
@@ -192,6 +193,13 @@ def merge_group(start, end, files, summary, record, k, n, force=False):
     try:
         tmp_path.replace(out_path)
     except OSError as e:   # e.g. the old file is open in a video player
+        # The old file stays, so describe it again: its record mustn't claim the
+        # new events, or a later run could take it for up to date
+        if previous is None:
+            record.pop(out_name)
+        else:
+            record[out_name] = previous
+        write_contents(out_dir, record, summary)
         return fail(f"couldn't replace the earlier file: {e}")
     record[out_name] = sources   # written with the day's other changes
     success_msg = f"Merged {len(files)} files -> {out_path}"
@@ -295,8 +303,9 @@ def main():
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory containing .mp4 files to merge (default: output)')
     parser.add_argument('--splits-per-day', type=int, default=1, help='Number of equal time windows to divide each day into, one merged .mp4 file per window '
                              'that has events (default: 1, i.e. all of a day\'s files merged into one). 1 to 1440.')
-    parser.add_argument('--force', action='store_true', help='Merge every day again, including parts that are '
-                        'already up to date (by default they are skipped).')
+    parser.add_argument('--force', action='store_true', help='Merge every part again, including ones that are '
+                        'already up to date (by default they are skipped), e.g. after upgrading to a '
+                        'version that merges differently.')
     args = parser.parse_args()
     if not 1 <= args.splits_per_day <= MINUTES_PER_DAY:
         parser.error(f'--splits-per-day must be 1 to {MINUTES_PER_DAY} (windows are whole minutes)')

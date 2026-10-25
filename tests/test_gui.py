@@ -41,6 +41,7 @@ def test_gui_shows_the_form(gui):
     assert not gui.exception
     assert [t.label for t in gui.text_input] == ['Input directory', 'Output directory']
     assert 'Run' in [b.label for b in gui.button]
+    assert 'Merge everything again' in [c.label for c in gui.checkbox]
 
 
 def test_gui_reports_success(gui, ws):

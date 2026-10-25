@@ -52,7 +52,7 @@ def main():
     parser.add_argument('--validate', dest='validate', action='store_true', help='Run output validation after merging (default: enabled).')
     parser.add_argument('--no-validate', dest='validate', action='store_false', help='Skip output validation step (faster, not recommended for final results).')
     parser.add_argument('--deep-validate', action='store_true', help='Also decode every output in full during validation (slow: about as long as the footage).')
-    parser.add_argument('--force-merge', action='store_true', help='Merge every day again, including parts '
+    parser.add_argument('--force-merge', action='store_true', help='Merge every part again, including ones '
                         'that are already up to date (forwarded to merge_videos.py as --force).')
     parser.add_argument('--splits-per-day', type=int, default=None, help='Number of equal time windows to divide each day into, one merged file per window with '
                              'events (1 to 1440; forwarded to merge_videos.py).')

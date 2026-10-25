@@ -880,3 +880,26 @@ def test_process_all_passes_force_merge_on(ws):
     result = ws.run('process_all.py', '--dry-run', '--force-merge')
 
     assert 'merge_videos.py' in result.stdout and '--force' in result.stdout
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='only Windows refuses to replace an open file')
+def test_a_part_that_couldnt_be_replaced_is_merged_again_next_time(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    assert ws.run('merge_videos.py').returncode == 0
+    [old] = ws.files('merged_*.mp4')
+    # A new event whose file is older than the merged one (e.g. copied back
+    # with its time kept), so only the record can tell the part is out of date
+    ws.add_media('0002.media', b'more')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    earlier = old.stat().st_mtime - 10
+    os.utime(ws.converted('0002.media'), (earlier, earlier))
+
+    with open(old, 'rb'):   # e.g. still open in a video player
+        assert ws.run('merge_videos.py').returncode == 1
+
+    result = ws.run('merge_videos.py')
+
+    assert result.returncode == 0, result.stdout
+    assert 'up to date' not in result.stdout
+    assert old.read_bytes() == b'OKOKgoodOKmore'
