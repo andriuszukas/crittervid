@@ -770,3 +770,37 @@ def test_merging_again_removes_a_part_whose_window_is_now_empty(ws):
     assert result.returncode == 0, result.stdout
     assert [f.name for f in day.glob('merged_*.mp4')] == ['merged_20251001_0000_20251001_1200_part1of2.mp4']
     assert ws.run('validate_output.py').returncode == 0
+
+
+# --- Files the merge leaves out (#8) ---
+
+def test_an_event_length_of_any_number_of_digits_is_converted_and_merged(ws):
+    ws.add_media('0001.media', b'four')
+    short = ws.root / 'input' / 'DCIM' / '2026' / '10' / '01' / '1759330000_60'
+    short.mkdir(parents=True)
+    (short / '0000.media').write_bytes(b'two')
+
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    result = ws.run('merge_videos.py')
+
+    assert result.returncode == 0, result.stdout
+    [merged] = ws.files('merged_*.mp4')
+    assert merged.read_bytes() == b'OKOKfourOKtwo'
+    assert 'WARNING' not in result.stdout
+    result = ws.run('validate_output.py')
+    assert result.returncode == 0 and 'WARNING' not in result.stdout, result.stdout
+
+
+def test_merge_warns_about_mp4_files_it_doesnt_know(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    stray = ws.root / 'output' / 'holiday.mp4'
+    stray.write_bytes(b'OKmine')
+    assert ws.run('merge_videos.py').returncode == 0   # its own merged files don't count
+
+    result = ws.run('merge_videos.py')
+
+    assert result.returncode == 0, result.stdout
+    assert "WARNING: 1 .mp4 files weren't merged" in result.stdout and 'holiday.mp4' in result.stdout
+    [merged] = ws.files('merged_*.mp4')
+    assert b'mine' not in merged.read_bytes()

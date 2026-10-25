@@ -27,8 +27,8 @@ OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
 FFPROBE = None
 
-EVENT_FILE = re.compile(r'\d{10,}_\d{4}\.mp4')
-SEGMENT_FILE = re.compile(r'\d{10,}_\d{4}_\d+\.mp4')
+EVENT_FILE = re.compile(r'\d{10,}_\d+\.mp4')
+SEGMENT_FILE = re.compile(r'\d{10,}_\d+_\d+\.mp4')
 # The merge step's file names, shared so the two agree on what it writes
 from merge_videos import MERGED_NAME as MERGED_FILE  # noqa: E402
 

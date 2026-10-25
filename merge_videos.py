@@ -20,7 +20,8 @@ SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
 # Regex to extract the event's start time and length from a file name
 # Converted files: one per event (<timestamp>_<duration>.mp4) for the cameras'
 # record format, or one per segment (<timestamp>_<duration>_<offset>.mp4)
-FILENAME_RE = re.compile(r'(?:^|[\\/])(\d{10,})_(\d{4})(?:_\d+)?\.mp4$')
+# (the cameras write 4-digit lengths, but any length is accepted)
+FILENAME_RE = re.compile(r'(?:^|[\\/])(\d{10,})_(\d+)(?:_\d+)?\.mp4$')
 # Names of the files this step writes: merged_<start>_<end>[_part<K>of<N>].mp4
 MERGED_NAME = re.compile(r'merged_\d{8}_\d{4}_\d{8}_\d{4}(?:_part(\d+)of(\d+))?\.mp4')
 # Each day's merged folder keeps a record of the converted files each merged file
@@ -297,6 +298,11 @@ def main():
         print(f"WARNING: {msg}")
         summary.append(f"WARNING: {msg}")
 
+    # Files the converter didn't write (e.g. copied in by hand) aren't merged; say so
+    unknown = sorted(f for f in mp4_files if not FILENAME_RE.search(str(f)) and MERGED_ROOT not in f.parents)
+    if unknown:
+        warn(f"{len(unknown)} .mp4 files weren't merged: their names aren't ones the converter writes "
+             f"(<start time>_<length>[_<offset>].mp4), e.g. {unknown[0]}")
     unset = sorted(unset_clock_files(mp4_files))
     if unset:
         events = {FILENAME_RE.search(str(f)).group(1) for f in unset}
