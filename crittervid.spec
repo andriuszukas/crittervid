@@ -27,6 +27,11 @@ datas += [
     ('process_all.py', '.'),
 ]
 
+# The package the scripts import: they put src/ next to them on the import path
+datas += [
+    ('src/crittervid', 'src/crittervid'),
+]
+
 # Add Streamlit config
 datas += [
     ('.streamlit/config.toml', '.streamlit'),

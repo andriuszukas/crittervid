@@ -1,9 +1,20 @@
 """
-Helper module to locate ffmpeg executable
+Finding FFmpeg and ffprobe, and passing paths to them
 """
 import os
 import sys
 import shutil
+
+
+def app_dir():
+    """Where a bundled or hand-placed ffmpeg is looked for: the PyInstaller
+    bundle's folder (_internal) when frozen, otherwise the project folder, the
+    one holding src/ (or this package's folder, if it isn't under src/)."""
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    here = os.path.dirname(os.path.abspath(__file__))
+    parent = os.path.dirname(here)
+    return os.path.dirname(parent) if os.path.basename(parent) == 'src' else here
 
 def media_arg(path):
     """A file path as FFmpeg and ffprobe should get it: absolute, so a colon in a
@@ -19,17 +30,11 @@ PATH_TEXT = {'encoding': 'utf-8', 'errors': 'surrogateescape'}
 def get_ffmpeg_path():
     """
     Find ffmpeg executable in the following order:
-    1. Same directory as script
+    1. The app's folder (see app_dir)
     2. System PATH
     3. Common installation locations
     """
-    # Get script directory
-    if getattr(sys, 'frozen', False):
-        # Running in PyInstaller bundle
-        script_dir = sys._MEIPASS
-    else:
-        # Running in normal Python
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = app_dir()
 
     # Check in script directory first
     local_ffmpeg = os.path.join(script_dir, 'ffmpeg')
@@ -71,10 +76,7 @@ def get_ffprobe_path():
         candidate = os.path.join(folder, name)
         if folder and os.path.isfile(candidate):
             return candidate
-    if getattr(sys, 'frozen', False):
-        script_dir = sys._MEIPASS
-    else:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = app_dir()
     for name in ('ffprobe', 'ffprobe.exe'):
         candidate = os.path.join(script_dir, name)
         if os.path.isfile(candidate):

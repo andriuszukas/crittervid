@@ -78,7 +78,7 @@ Measured on real footage while building the converter:
 
 - **Per-frame timestamps, not an average frame rate.**
   - A constant frame rate per segment would put frames within about 40 ms of their true time in typical segments, but up to 243 ms off in rare ones.
-  - FFmpeg can't attach timestamps to raw H.264, so `media_format.py` writes the frames into a minimal MPEG-TS stream, where each frame carries its own timestamp. FFmpeg then copies them into MP4.
+  - FFmpeg can't attach timestamps to raw H.264, so `media_format.py` (now `src/crittervid/media_format.py`) writes the frames into a minimal MPEG-TS stream, where each frame carries its own timestamp. FFmpeg then copies them into MP4.
   - On a real segment, all 198 frames came out within 0.011 ms of the camera's timestamps.
 - **One MP4 per event, not per segment.**
   - FFmpeg gives the last frame of every file an estimated duration, so joining a 10-minute event from per-segment files added about 50 ms per join: 604.1 s instead of 602.

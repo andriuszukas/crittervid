@@ -1,8 +1,3 @@
-# For building and testing, on top of what the app needs
--r requirements.txt
-
-# Build tool for the standalone app
-pyinstaller==6.11.1
-
-# Tests
-pytest==9.1.1
+# For building and testing, on top of what the app needs (see pyproject.toml).
+# Run pip from the project folder (the path is relative to it).
+-e .[gui,gpu,dev]

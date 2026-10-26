@@ -72,6 +72,8 @@ def make_workspace(tmp_path, path_prefix=None):
     # precedence over the ffmpeg chosen for the test
     for name in SCRIPTS:
         shutil.copy(REPO_ROOT / name, app)
+    # The package the scripts import (they put src/ on the import path)
+    shutil.copytree(REPO_ROOT / 'src', app / 'src', ignore=shutil.ignore_patterns('__pycache__', '*.egg-info'))
     env = dict(os.environ)
     # Run the scripts as they'd run on a plain machine: these variables would hide
     # buffering and encoding bugs the tests are meant to catch
