@@ -1,6 +1,6 @@
 # 0002: One package with one entry point
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-26), with the recommended answers to the questions at the end
 - **Issues:** #24 (restructure), which unblocks #25 (step interface), #26 (logging), #29 (`doctor`) and fixes #4 (the app needs a system Python)
 
 ## Context
@@ -150,7 +150,7 @@ Each PR gets its own review, as usual. After these: #26 (logging), #25 (step int
 - **Ctrl+C in-process.** #9's handling is written for a stage that is its own process. With stages in-process, one handler covers the run. PR 3 keeps #9's tests and adds one for `crittervid run`.
 - **Size of the move.** PRs 1 and 2 are mostly renames. Keeping behaviour identical, and the suite untouched apart from imports, makes them easy to review.
 
-## Questions for you
+## Questions (answered: the recommended options)
 
 1. **Wrappers for one release, then remove them?** Recommended. Users who run `python process_all.py` keep working, with a notice.
 2. **GUI runs the pipeline as a child process of itself?** Recommended. The alternative, running stages in a GUI thread, is harder to stop cleanly, and a crash takes the GUI down.
