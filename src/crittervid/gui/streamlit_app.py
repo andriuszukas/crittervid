@@ -4,13 +4,17 @@ import os
 import sys
 from tkinter import Tk, filedialog
 
-# Get the correct script directory (works both in dev and frozen exe)
-if getattr(sys, 'frozen', False):
-    # Running in PyInstaller bundle
-    SCRIPT_DIR = sys._MEIPASS
-else:
-    # Running in normal Python
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# The folder holding the crittervid package (src/ in a checkout), so the pipeline
+# started below finds this copy of it even when it isn't installed
+PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def pipeline_command():
+    """The command that runs the pipeline: this app itself when frozen, so no
+    separate Python is needed (#4), or this Python with the crittervid package."""
+    if getattr(sys, 'frozen', False):
+        return [sys.executable, 'run']
+    return [sys.executable, '-m', 'crittervid', 'run']
 
 st.set_page_config(page_title="CritterVid", page_icon="🦜", layout="wide")
 
@@ -137,17 +141,7 @@ if st.button("Run"):
     accel_map = {"Auto": "auto", "CPU": "cpu", "NVIDIA": "cuda", "Intel": "qsv", "AMD": "amf"}
     accel = accel_map.get(accel_display, "auto")
 
-    # Use the correct path to process_all.py
-    process_script = os.path.join(SCRIPT_DIR, "process_all.py")
-
-    # In frozen exe, we need to call python directly on the script
-    # In dev, sys.executable is the python interpreter
-    if getattr(sys, 'frozen', False):
-        # Running as frozen exe - call python on the script
-        cmd = ["python", process_script]
-    else:
-        # Running in development - use sys.executable
-        cmd = [sys.executable, process_script]
+    cmd = pipeline_command()
     if input_dir:
         cmd += ["--input-dir", input_dir]
     if output_dir:
@@ -176,6 +170,8 @@ if st.button("Run"):
     # PYTHONIOENCODING so stdout and stderr (including tracebacks raised before a
     # script reconfigures its streams) are UTF-8, matching how they're decoded below
     env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8:replace")
+    if not getattr(sys, 'frozen', False):
+        env['PYTHONPATH'] = os.pathsep.join([PACKAGE_PARENT] + [p for p in env.get('PYTHONPATH', '').split(os.pathsep) if p])
     process = subprocess.Popen(
         cmd,
         env=env,

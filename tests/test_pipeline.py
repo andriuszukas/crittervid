@@ -913,10 +913,10 @@ def crittervid(ws, *args):
 
 
 def test_crittervid_lists_its_commands(ws):
-    result = crittervid(ws)
+    result = crittervid(ws, '--help')
 
-    assert result.returncode == 2
-    for command in ('run', 'convert', 'merge', 'validate'):
+    assert result.returncode == 0
+    for command in ('run', 'convert', 'merge', 'validate', 'gui'):
         assert f'crittervid {command}' in result.stdout
     assert crittervid(ws, '--version').stdout.startswith('crittervid ')
     unknown = crittervid(ws, 'transcode')

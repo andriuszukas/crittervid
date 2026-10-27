@@ -25,7 +25,7 @@ def gui(ws, monkeypatch):
     require(AppTest is not None, 'Streamlit')
     # The app starts the pipeline with this process's environment
     monkeypatch.setenv('PATH', ws.env['PATH'])
-    at = AppTest.from_file(str(ws.root / 'app.py'), default_timeout=RUN_TIMEOUT)
+    at = AppTest.from_file(str(ws.root / 'src' / 'crittervid' / 'gui' / 'streamlit_app.py'), default_timeout=RUN_TIMEOUT)
     return at.run()
 
 
@@ -64,7 +64,7 @@ def test_gui_reports_failure(gui, ws):
 
 
 def test_app_help_text_matches_deployment_docs():
-    app = Path(__file__).resolve().parent.parent / 'app.py'
+    app = Path(__file__).resolve().parent.parent / 'src' / 'crittervid' / 'gui' / 'streamlit_app.py'
     app_text = app.read_text(encoding="utf-8")
     assert "Auto recommended" not in app_text
     assert "Auto** - Automatically detects your GPU (recommended)" not in app_text
@@ -72,3 +72,12 @@ def test_app_help_text_matches_deployment_docs():
     assert "unless the build bundled it" in app_text
     assert "can't detect NVIDIA cards" in app_text
     assert "into the `_internal` folder" in app_text
+
+
+def test_old_app_name_still_shows_the_form(ws):
+    # `streamlit run app.py` from the project folder, as run_app.bat once did
+    require(AppTest is not None, 'Streamlit')
+    at = AppTest.from_file(str(ws.root / 'app.py'), default_timeout=RUN_TIMEOUT).run()
+
+    assert not at.exception
+    assert 'Run' in [b.label for b in at.button]

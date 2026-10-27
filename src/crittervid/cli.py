@@ -4,6 +4,7 @@
     crittervid convert   .media files to .mp4
     crittervid merge     converted files into days
     crittervid validate  check the outputs
+    crittervid gui       the graphical interface (also what no command opens)
 
 Each command has its own options; `crittervid <command> --help` lists them.
 """
@@ -19,6 +20,7 @@ COMMANDS = {
     'convert': 'convert',
     'merge': 'merge',
     'validate': 'validate',
+    'gui': 'gui.launch',
 }
 
 
@@ -28,9 +30,11 @@ def usage():
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
-    if not argv or argv[0] in ('-h', '--help'):
+    if not argv:   # e.g. the app opened by double-clicking it
+        argv = ['gui']
+    if argv[0] in ('-h', '--help'):
         print(usage())
-        return 0 if argv else 2
+        return 0
     if argv[0] in ('-V', '--version'):
         print(f'crittervid {__version__}')
         return 0
