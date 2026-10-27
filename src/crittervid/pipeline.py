@@ -4,17 +4,23 @@ import sys
 import argparse
 import os
 
-# Get the correct script directory (works both in dev and frozen exe)
-if getattr(sys, 'frozen', False):
-    # Running in PyInstaller bundle
-    SCRIPT_DIR = sys._MEIPASS
-else:
-    # Running in normal Python
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# The stages run as separate Python programs, as package modules: this package's
+# parent folder goes on their import path, so they find it wherever it is (a
+# checkout, an install, or the app bundle run with a system Python)
+PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONVERT_SCRIPT = 'crittervid.convert'
+MERGE_SCRIPT = 'crittervid.merge'
+VALIDATE_SCRIPT = 'crittervid.validate'
 
-CONVERT_SCRIPT = os.path.join(SCRIPT_DIR, 'convert_media.py')
-MERGE_SCRIPT = os.path.join(SCRIPT_DIR, 'merge_videos.py')
-VALIDATE_SCRIPT = os.path.join(SCRIPT_DIR, 'validate_output.py')
+
+def stage(module, args):
+    """The command line that runs a stage."""
+    return [sys.executable, '-m', module] + args
+
+
+def stage_env():
+    paths = [PACKAGE_PARENT] + [p for p in os.environ.get('PYTHONPATH', '').split(os.pathsep) if p]
+    return dict(os.environ, PYTHONPATH=os.pathsep.join(paths))
 
 
 def run_step(cmd):
@@ -23,7 +29,7 @@ def run_step(cmd):
     writing its summary) instead of killing it, then stop the pipeline. (A stop
     signal sent to this process alone doesn't reach the step, so it then waits
     for the step to finish.)"""
-    proc = subprocess.Popen(cmd)
+    proc = subprocess.Popen(cmd, env=stage_env())
     try:
         return proc.wait()
     except KeyboardInterrupt:
@@ -31,7 +37,7 @@ def run_step(cmd):
         raise
 
 
-def main():
+def main(argv=None):
     # Flush each line so step headers stay in order with the child scripts' output
     # when stdout is a pipe (e.g. the GUI or `| tee`). Write UTF-8 like the child
     # scripts, since paths can contain characters the console's code page lacks
@@ -57,7 +63,7 @@ def main():
     parser.add_argument('--splits-per-day', type=int, default=None, help='Number of equal time windows to divide each day into, one merged file per window with '
                              'events (1 to 1440; forwarded to merge_videos.py).')
     parser.set_defaults(validate=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
 
     convert_args = []
@@ -78,10 +84,10 @@ def main():
 
     print("=== Step 1: Convert .media to .mp4 ===")
     if args.dry_run:
-        print(f"[DRY RUN] Would run: python {CONVERT_SCRIPT} {' '.join(convert_args)}")
+        print(f"[DRY RUN] Would run: python -m {CONVERT_SCRIPT} {' '.join(convert_args)}")
         rc1 = 0
     else:
-        rc1 = run_step([sys.executable, CONVERT_SCRIPT] + convert_args)
+        rc1 = run_step(stage(CONVERT_SCRIPT, convert_args))
 
     print("=== Step 2: Merge .mp4 files into longer clips ===")
     merge_summary = os.path.join(args.output_dir, 'merged', 'merge_summary.txt')
@@ -93,7 +99,7 @@ def main():
     if args.force_merge:
         merge_args += ['--force']
     if args.dry_run:
-        print(f"[DRY RUN] Would run: python {MERGE_SCRIPT} {' '.join(merge_args)}")
+        print(f"[DRY RUN] Would run: python -m {MERGE_SCRIPT} {' '.join(merge_args)}")
         rc2 = 0
     else:
         # Remove the previous run's report first, so it can't be mistaken for this
@@ -102,7 +108,7 @@ def main():
             os.remove(merge_summary)
         except OSError:
             pass
-        rc2 = run_step([sys.executable, MERGE_SCRIPT] + merge_args)
+        rc2 = run_step(stage(MERGE_SCRIPT, merge_args))
 
     if args.validate:
         print("=== Step 3: Validate output and directory structure ===")
@@ -116,10 +122,10 @@ def main():
         if args.accel:
             validate_args += ['--accel', args.accel]
         if args.dry_run:
-            print(f"[DRY RUN] Would run: python validate_output.py {' '.join(validate_args)}")
+            print(f"[DRY RUN] Would run: python -m {VALIDATE_SCRIPT} {' '.join(validate_args)}")
             rc3 = 0
         else:
-            rc3 = run_step([sys.executable, VALIDATE_SCRIPT] + validate_args)
+            rc3 = run_step(stage(VALIDATE_SCRIPT, validate_args))
     else:
         print("=== Step 3: Validation skipped (use --validate to enable) ===")
         rc3 = 0

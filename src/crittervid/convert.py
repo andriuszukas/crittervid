@@ -10,8 +10,8 @@ import tempfile
 import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import platform
-from ffmpeg_helper import PATH_TEXT, get_ffmpeg_path, media_arg
-import media_format
+from . import media_format
+from .ffmpeg import PATH_TEXT, get_ffmpeg_path, media_arg
 
 INPUT_ROOT = Path('input/DCIM')
 OUTPUT_ROOT = Path('output')
@@ -362,7 +362,7 @@ def convert_event_parallel(args):
                               f"so its real time is unknown; it won't be merged with dated days")
     return local_summary, local_failed, success
 
-def main():
+def main(argv=None):
     # Paths can contain characters the console's code page can't encode (e.g. the
     # Windows default when output is piped to the GUI), so always write UTF-8.
     # The streams are None when there's no console at all (pythonw).
@@ -377,7 +377,7 @@ def main():
     parser.add_argument('--copy', action='store_true', help='Copy video stream without re-encoding (fast, requires compatible input)')
     parser.add_argument('--retry-failed', action='store_true', help='Retry only files that failed in previous run')
     parser.add_argument('--max-retries', type=int, default=3, help='Maximum number of retry attempts for failed files (default: 3)')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     # On Windows, Ctrl+Break (how a program stops a console child) stops the run
     # like Ctrl+C
     if hasattr(signal, 'SIGBREAK'):

@@ -21,7 +21,8 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from ffmpeg_helper import get_ffmpeg_path, get_ffprobe_path, media_arg
+from . import names
+from .ffmpeg import get_ffmpeg_path, get_ffprobe_path, media_arg
 
 OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
@@ -30,7 +31,7 @@ FFPROBE = None
 EVENT_FILE = re.compile(r'\d{10,}_\d+\.mp4')
 SEGMENT_FILE = re.compile(r'\d{10,}_\d+_\d+\.mp4')
 # The merge step's file names, shared so the two agree on what it writes
-from merge_videos import MERGED_NAME as MERGED_FILE  # noqa: E402
+from .names import MERGED_NAME as MERGED_FILE  # noqa: E402
 
 # An event's audio is cut to its video's span; AAC's 128 ms blocks and the last
 # frame's estimated length leave at most a few hundredths of a second between them
@@ -183,15 +184,13 @@ def check_merged_part(label, part, sources, probes):
 def check_merged_days(converted, merged, probes):
     """Compare each merged file with the converted files it was made from,
     grouped and split the same way the merge step does it."""
-    import merge_videos
-    merge_videos.OUTPUT_ROOT, merge_videos.MERGED_ROOT = OUTPUT_ROOT, MERGED_ROOT
     found = defaultdict(list)
     for path in merged:
         if MERGED_FILE.fullmatch(path.name):   # other names only get the name warning
             found[path.parent.relative_to(MERGED_ROOT).as_posix()].append(path)
 
     problems = []
-    for day_start, files in sorted(merge_videos.group_files_by_day(converted).items()):
+    for day_start, files in sorted(names.group_files_by_day(converted).items()):
         day = day_start.strftime('%Y/%m/%d')
         parts = found.pop(day, [])
         dated, files = files, [f for _, f in files]
@@ -214,7 +213,7 @@ def check_merged_days(converted, merged, probes):
                 [(_, part)] = set_parts.items()
                 problems += check_merged_part(f'merged {day}', part, [probes[f] for f in files], probes)
                 continue
-            for k, start, end, chunk in merge_videos.split_day(day_start, dated, n):
+            for k, start, end, chunk in names.split_day(day_start, dated, n):
                 chunk = [f for _, f in chunk]
                 part = set_parts.get(k)
                 if chunk and part is None:
@@ -222,7 +221,7 @@ def check_merged_days(converted, merged, probes):
                 elif part is not None and not chunk:
                     problems.append(f'WARNING: {part}: no converted files belong in this part')
                 elif part is not None:
-                    if part.name != merge_videos.part_name(start, end, k, n):
+                    if part.name != names.part_name(start, end, k, n):
                         problems.append(f'WARNING: {part}: part {k} of {n} covers {start:%H:%M} to {end:%H:%M}, '
                                         f'not the times in its name (made by an earlier version? merge again)')
                     problems += check_merged_part(f'merged {day} part {k} of {n}', part,
@@ -230,14 +229,14 @@ def check_merged_days(converted, merged, probes):
             problems += [f'WARNING: {part}: part {k} of {n} is not a part the merge writes'
                          for k, part in sorted(set_parts.items()) if not 1 <= k <= n]
     for day in sorted(found):
-        if merge_videos.unset_clock_day(day):
-            problems.append(f'WARNING: {MERGED_ROOT / day} {merge_videos.UNSET_CLOCK_MERGES}')
+        if names.unset_clock_day(day):
+            problems.append(f'WARNING: {MERGED_ROOT / day} {names.UNSET_CLOCK_MERGES}')
         else:
             problems.append(f'WARNING: merged files for {day} have no matching converted files')
     return problems
 
 
-def main():
+def main(argv=None):
     # Paths can contain characters the console's code page can't encode (e.g. the
     # Windows default when output is piped to the GUI), so always write UTF-8.
     # The streams are None when there's no console at all (pythonw).
@@ -251,7 +250,7 @@ def main():
                         help='Also decode every file in full, to check FFmpeg can get through each one (slow: about as long as the footage)')
     parser.add_argument('--accel', choices=['cpu', 'cuda', 'qsv', 'vaapi', 'amf', 'auto'], default=None,
                         help='Hardware decoding for --deep (default: none); files that fail are retried on the CPU')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     global OUTPUT_ROOT, MERGED_ROOT, FFPROBE
     OUTPUT_ROOT = Path(args.output_dir)
@@ -287,7 +286,7 @@ def main():
             elif converted:
                 print('No merged files yet, so merged days are not checked.')
         if deep:
-            from convert_media import ACCEL_OPTIONS, detect_accel
+            from .convert import ACCEL_OPTIONS, detect_accel
             accel = detect_accel() if args.accel == 'auto' else args.accel
             input_opts = ACCEL_OPTIONS.get(accel, ([], []))[0]
             with ThreadPoolExecutor(max_workers=args.workers) as executor:
