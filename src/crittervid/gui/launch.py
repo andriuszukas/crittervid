@@ -1,7 +1,4 @@
-"""
-Launcher script for CritterVid
-This launches the Streamlit app properly
-"""
+"""crittervid gui: starts the Streamlit app on a free port of this computer."""
 import errno
 import os
 import socket
@@ -41,17 +38,10 @@ def find_free_port(start_port=8501, max_tries=10):
     return start_port  # Fallback to default
 
 
-if __name__ == '__main__':
-    # Get the directory where the executable is located
-    if getattr(sys, 'frozen', False):
-        # Running in PyInstaller bundle
-        app_dir = sys._MEIPASS
-    else:
-        # Running in normal Python environment
-        app_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Path to app.py
-    app_path = os.path.join(app_dir, 'app.py')
+def main(argv=None):
+    # The app ships next to this module: in a checkout, an install, or the app
+    # bundle (where it's a data file in crittervid/gui/)
+    app_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'streamlit_app.py')
 
     # Find an available port starting from 8501
     port = find_free_port()
@@ -71,4 +61,4 @@ if __name__ == '__main__':
         '--browser.serverAddress=localhost',
         '--browser.gatherUsageStats=false',
     ]
-    sys.exit(stcli.main())
+    return stcli.main()

@@ -14,7 +14,8 @@ CritterVid converts segmented `.media` files from wildlife trail cameras into `.
 - `src/crittervid/validate.py` (was `validate_output.py`) — fast checks with ffprobe: event files have video and audio of matching length, merged days match the sum of their files (grouped like the merge), names are as expected. `--deep` decodes every file once.
 - `src/crittervid/cli.py` — the `crittervid` command (`python -m crittervid`): `run`, `convert`, `merge`, `validate`, each handing its options to that step's `main(argv)`.
 - `src/crittervid/names.py` — file-name patterns, day grouping and the split into time windows, shared by the merge and validation.
-- `src/crittervid/pipeline.py` (was `process_all.py`) — runs the three stages in order, in one process (`crittervid run`); `app.py` is the GUI that runs `process_all.py`.
+- `src/crittervid/pipeline.py` (was `process_all.py`) — runs the three stages in order, in one process (`crittervid run`).
+- `src/crittervid/gui/` — `crittervid gui` (also the default with no command): `launch.py` (was `launcher.py`) starts Streamlit on a free local port with `streamlit_app.py` (was `app.py`), which runs the pipeline by starting `crittervid run` (the app itself when built, so no separate Python is needed).
 - `src/crittervid/ffmpeg.py` (was `ffmpeg_helper.py`) — finds FFmpeg (project folder, or `_internal` in the built app, then `PATH`).
 
 ## Conventions

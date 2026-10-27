@@ -16,20 +16,10 @@ datas += copy_metadata('numpy')
 # Collect streamlit data files
 datas += collect_data_files('streamlit')
 
-# Add our scripts
+# The Streamlit app is run from its file, so it ships as one, next to the
+# crittervid.gui modules (the rest of the package is compiled into the app)
 datas += [
-    ('app.py', '.'),
-    ('ffmpeg_helper.py', '.'),
-    ('media_format.py', '.'),
-    ('convert_media.py', '.'),
-    ('merge_videos.py', '.'),
-    ('validate_output.py', '.'),
-    ('process_all.py', '.'),
-]
-
-# The package the scripts import: they put src/ next to them on the import path
-datas += [
-    ('src/crittervid', 'src/crittervid'),
+    ('src/crittervid/gui/streamlit_app.py', 'crittervid/gui'),
 ]
 
 # Add Streamlit config
@@ -57,11 +47,17 @@ else:
           'Users will need FFmpeg on their PATH.')
 
 a = Analysis(
-    ['launcher.py'],
-    pathex=[],
+    ['src/crittervid/__main__.py'],
+    pathex=['src'],
     binaries=binaries,
     datas=datas,
     hiddenimports=[
+        # The crittervid command imports each command's module by name
+        'crittervid.pipeline',
+        'crittervid.convert',
+        'crittervid.merge',
+        'crittervid.validate',
+        'crittervid.gui.launch',
         'streamlit',
         'streamlit.runtime.scriptrunner.magic_funcs',
         'streamlit.web.cli',

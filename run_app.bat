@@ -1,3 +1,3 @@
-@echo off
-echo Starting CritterVid...
-streamlit run app.py --server.headless=true
+@echo off
+echo Starting CritterVid...
+python "%~dp0launcher.py"
