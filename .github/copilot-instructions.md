@@ -12,8 +12,9 @@ CritterVid converts segmented `.media` files from wildlife trail cameras into `.
 - `src/crittervid/convert.py` (was `convert_media.py`) — converts each event folder into one `<timestamp>_<duration>.mp4`: video copied with camera timestamps (pauses kept), audio placed by its timestamps and encoded as AAC (silent if none), damaged segments skipped or trimmed with warnings, length checked against the folder name. Event folders with no record-format file fall back to per-segment FFmpeg conversion (`--accel`, `--copy`).
 - `src/crittervid/merge.py` (was `merge_videos.py`) — groups converted files by day and joins them with FFmpeg's concat demuxer (`inpoint 0` per file, audio re-encoded once) into one file per `--splits-per-day` time window (an event goes in the window it starts in).
 - `src/crittervid/validate.py` (was `validate_output.py`) — fast checks with ffprobe: event files have video and audio of matching length, merged days match the sum of their files (grouped like the merge), names are as expected. `--deep` decodes every file once.
+- `src/crittervid/cli.py` — the `crittervid` command (`python -m crittervid`): `run`, `convert`, `merge`, `validate`, each handing its options to that step's `main(argv)`.
 - `src/crittervid/names.py` — file-name patterns, day grouping and the split into time windows, shared by the merge and validation.
-- `src/crittervid/pipeline.py` (was `process_all.py`) — runs the three stages in order, each as `python -m crittervid.<stage>`; `app.py` is the GUI that runs `process_all.py`.
+- `src/crittervid/pipeline.py` (was `process_all.py`) — runs the three stages in order, in one process (`crittervid run`); `app.py` is the GUI that runs `process_all.py`.
 - `src/crittervid/ffmpeg.py` (was `ffmpeg_helper.py`) — finds FFmpeg (project folder, or `_internal` in the built app, then `PATH`).
 
 ## Conventions

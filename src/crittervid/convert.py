@@ -15,7 +15,6 @@ from .ffmpeg import PATH_TEXT, get_ffmpeg_path, media_arg
 
 INPUT_ROOT = Path('input/DCIM')
 OUTPUT_ROOT = Path('output')
-FFMPEG_PATH = get_ffmpeg_path()  # Auto-detect ffmpeg location
 SUMMARY_REPORT = OUTPUT_ROOT / 'conversion_summary.txt'
 FAILED_FILES = OUTPUT_ROOT / 'conversion_failed.txt'
 
@@ -186,7 +185,7 @@ def record_format_command(video, audio, out_path, workdir, start=None):
     audio_path.write_bytes(media_format.audio_pcm(audio, video[0][0], video[-1][0] + last_frame))
     # FFmpeg treats jumps of more than 10 s in MPEG-TS timestamps as errors and
     # closes them up; a raised threshold keeps real pauses in the recording
-    return [FFMPEG_PATH, '-y', '-dts_delta_threshold', '1000000', '-i', str(video_path),
+    return [get_ffmpeg_path(), '-y', '-dts_delta_threshold', '1000000', '-i', str(video_path),
             '-f', 's16le', '-ar', str(media_format.AUDIO_SAMPLE_RATE), '-i', str(audio_path),
             '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac',
             *([] if start is None else media_format.creation_time_args(start)), '-f', 'mp4', media_arg(out_path)]
@@ -282,11 +281,11 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
         offset = int(media_path.stem) if media_path.stem.isdigit() else 0
         output = media_format.creation_time_args(int(timestamp) + offset) + FALLBACK_OUTPUT
         if copy_mode:
-            cmd = [FFMPEG_PATH, '-y', '-i', media_arg(media_path), '-c:v', 'copy'] + output + [media_arg(tmp_path)]
+            cmd = [get_ffmpeg_path(), '-y', '-i', media_arg(media_path), '-c:v', 'copy'] + output + [media_arg(tmp_path)]
             method = 'copy'
         else:
             input_opts, output_opts = ACCEL_OPTIONS[accel]
-            cmd = [FFMPEG_PATH, '-y'] + input_opts + ['-i', media_arg(media_path)] + output_opts + output + [media_arg(tmp_path)]
+            cmd = [get_ffmpeg_path(), '-y'] + input_opts + ['-i', media_arg(media_path)] + output_opts + output + [media_arg(tmp_path)]
             method = accel
         result = run_ffmpeg(cmd)
         if result.returncode != 0:
@@ -369,7 +368,7 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if stream is not None:
             stream.reconfigure(encoding='utf-8', errors='replace')
-    parser = argparse.ArgumentParser(description="Convert .media files to .mp4 with optional hardware acceleration.")
+    parser = argparse.ArgumentParser(prog='crittervid convert', description="Convert .media files to .mp4 with optional hardware acceleration.")
     parser.add_argument('--input-dir', type=str, default='input/DCIM', help='Input directory containing .media files (default: input/DCIM)')
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory for converted .mp4 files (default: output)')
     parser.add_argument('--accel', choices=['cpu', 'cuda', 'qsv', 'vaapi', 'amf', 'auto'], default='auto', help='Hardware acceleration type (default: auto)')
@@ -378,6 +377,7 @@ def main(argv=None):
     parser.add_argument('--retry-failed', action='store_true', help='Retry only files that failed in previous run')
     parser.add_argument('--max-retries', type=int, default=3, help='Maximum number of retry attempts for failed files (default: 3)')
     args = parser.parse_args(argv)
+    STOP.clear()   # a stop from an earlier run in this process is over
     # On Windows, Ctrl+Break (how a program stops a console child) stops the run
     # like Ctrl+C
     if hasattr(signal, 'SIGBREAK'):

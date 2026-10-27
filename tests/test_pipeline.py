@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import GROUP_DIR
+from conftest import GROUP_DIR, make_workspace
 
 
 # --- Conversion: failed output must never look finished ---
@@ -566,7 +566,7 @@ def start_slow_run(ws, script, *args, segments=10):
     for i in range(segments):
         ws.add_media(f'{i:04d}.media', b'good')
     env = dict(ws.env, FAKE_FFMPEG_SLEEP='3', FAKE_FFMPEG_LOG=str(ws.root / 'calls'))
-    proc = subprocess.Popen([sys.executable, script, '--accel', 'cpu', '--workers', '1', *args],
+    proc = subprocess.Popen(ws.command(script, '--accel', 'cpu', '--workers', '1', *args),
                             cwd=ws.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             encoding='utf-8', errors='replace',
                             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
@@ -879,7 +879,7 @@ def test_merge_redoes_a_day_when_forced_or_unrecorded(ws, how):
 def test_process_all_passes_force_merge_on(ws):
     result = ws.run('process_all.py', '--dry-run', '--force-merge')
 
-    assert 'crittervid.merge' in result.stdout and '--force' in result.stdout
+    assert 'crittervid merge' in result.stdout and '--force' in result.stdout
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='only Windows refuses to replace an open file')
@@ -903,3 +903,56 @@ def test_a_part_that_couldnt_be_replaced_is_merged_again_next_time(ws):
     assert result.returncode == 0, result.stdout
     assert 'up to date' not in result.stdout
     assert old.read_bytes() == b'OKOKgoodOKmore'
+
+
+# --- The crittervid command (#24) ---
+
+def crittervid(ws, *args):
+    return subprocess.run([sys.executable, '-m', 'crittervid', *args], cwd=ws.root, env=ws.env,
+                          capture_output=True, encoding='utf-8', errors='replace')
+
+
+def test_crittervid_lists_its_commands(ws):
+    result = crittervid(ws)
+
+    assert result.returncode == 2
+    for command in ('run', 'convert', 'merge', 'validate'):
+        assert f'crittervid {command}' in result.stdout
+    assert crittervid(ws, '--version').stdout.startswith('crittervid ')
+    unknown = crittervid(ws, 'transcode')
+    assert unknown.returncode == 2 and "unknown command 'transcode'" in unknown.stderr
+
+
+@pytest.mark.parametrize('script, command', [('convert_media.py', 'convert'), ('merge_videos.py', 'merge'),
+                                             ('validate_output.py', 'validate'), ('process_all.py', 'run')])
+def test_old_script_names_still_run_their_step(ws, script, command):
+    result = subprocess.run([sys.executable, script, '--help'], cwd=ws.root, env=ws.env,
+                            capture_output=True, encoding='utf-8', errors='replace')
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f'usage: crittervid {command}' in result.stdout
+
+
+def test_a_step_that_rejects_its_options_doesnt_stop_the_run(ws):
+    ws.add_media('0001.media', b'good')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--splits-per-day', '0')
+
+    assert result.returncode == 1
+    assert '--splits-per-day must be 1 to 1440' in result.stderr
+    assert 'Traceback' not in result.stdout + result.stderr
+    assert '=== Step 3' in result.stdout and 'Some steps failed' in result.stdout
+    assert ws.converted('0001.media').exists()
+
+
+def test_ffmpeg_can_be_named_with_an_environment_variable(tmp_path, fake_ffmpeg_dir):
+    ws = make_workspace(tmp_path)   # no fake FFmpeg on PATH
+    suffix = '.bat' if os.name == 'nt' else ''
+    ws.env['CRITTERVID_FFMPEG'] = str(fake_ffmpeg_dir / f'ffmpeg{suffix}')
+    ws.env['CRITTERVID_FFPROBE'] = str(fake_ffmpeg_dir / f'ffprobe{suffix}')
+    ws.add_media('0001.media', b'good')
+
+    result = ws.run('process_all.py', '--accel', 'cpu')
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ws.converted('0001.media').read_bytes() == b'OKgood'
