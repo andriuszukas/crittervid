@@ -38,7 +38,8 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
 - Python 3.10 to 3.13 (3.14 isn't supported yet: the pinned PyInstaller doesn't install on it)
 - [FFmpeg](https://ffmpeg.org/download.html) — either on your `PATH`, or place `ffmpeg.exe` (Windows) / `ffmpeg` (macOS, Linux) in the project folder.
   > **Note:** FFmpeg is intentionally **not** committed to this repo (it exceeds GitHub's file-size limit). Download it separately.
-- Python dependencies, on any system:
+- Python dependencies, on any system, run from the project folder (it installs CritterVid itself
+  too, as an editable package):
   ```bash
   pip install -r requirements.txt
   ```
