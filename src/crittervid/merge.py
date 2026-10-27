@@ -14,8 +14,6 @@ from .names import (FILENAME_RE, MERGED_NAME, MINUTES_PER_DAY, UNSET_CLOCK_MERGE
 
 OUTPUT_ROOT = Path('output')
 MERGED_ROOT = Path('output/merged')
-FFMPEG_PATH = get_ffmpeg_path()  # Auto-detect ffmpeg location
-FFPROBE_PATH = get_ffprobe_path()
 SEGMENT_DURATION_HOURS = 12
 SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
 
@@ -34,9 +32,9 @@ def video_end(path):
     None if ffprobe isn't available or can't read it. Usually the video starts
     at 0; when the first frame is placed later, the file still runs until then
     plus its length."""
-    if not FFPROBE_PATH:
+    if not get_ffprobe_path():
         return None
-    result = subprocess.run([FFPROBE_PATH, '-v', 'error', '-select_streams', 'v:0',
+    result = subprocess.run([get_ffprobe_path(), '-v', 'error', '-select_streams', 'v:0',
                              '-show_entries', 'stream=start_time,duration', '-of', 'csv=p=0', media_arg(path)],
                             capture_output=True, text=True, encoding='utf-8', errors='replace')
     try:
@@ -101,7 +99,7 @@ def merge_group(start, end, files, summary, record, k, n, force=False):
                 f.write(f"outpoint {video_stop:.6f}\nduration {video_stop:.6f}\n")
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
-    cmd = [FFMPEG_PATH, '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac',
+    cmd = [get_ffmpeg_path(), '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac',
            *media_format.creation_time_args(file_start(files[0][1])), '-f', 'mp4', media_arg(tmp_path)]
     result = subprocess.run(cmd, capture_output=True)
     filelist_path.unlink()
@@ -240,7 +238,7 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if stream is not None:
             stream.reconfigure(encoding='utf-8', errors='replace')
-    parser = argparse.ArgumentParser(description="Merge converted .mp4 files into one or more clips per day.")
+    parser = argparse.ArgumentParser(prog='crittervid merge', description="Merge converted .mp4 files into one or more clips per day.")
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory containing .mp4 files to merge (default: output)')
     parser.add_argument('--splits-per-day', type=int, default=1, help='Number of equal time windows to divide each day into, one merged .mp4 file per window '
                              'that has events (default: 1, i.e. all of a day\'s files merged into one). 1 to 1440.')

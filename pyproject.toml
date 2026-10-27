@@ -23,6 +23,9 @@ dev = [
     "pytest==9.1.1",
 ]
 
+[project.scripts]
+crittervid = "crittervid.cli:main"
+
 [tool.setuptools.dynamic]
 version = {attr = "crittervid.__version__"}
 

@@ -1,6 +1,7 @@
 """
 Finding FFmpeg and ffprobe, and passing paths to them
 """
+import functools
 import os
 import sys
 import shutil
@@ -27,13 +28,17 @@ def media_arg(path):
 PATH_TEXT = {'encoding': 'utf-8', 'errors': 'surrogateescape'}
 
 
+@functools.lru_cache(maxsize=None)
 def get_ffmpeg_path():
     """
-    Find ffmpeg executable in the following order:
-    1. The app's folder (see app_dir)
-    2. System PATH
-    3. Common installation locations
+    Find ffmpeg executable in the following order (once, when first needed):
+    1. CRITTERVID_FFMPEG, if set
+    2. The app's folder (see app_dir)
+    3. System PATH
+    4. Common installation locations
     """
+    if os.environ.get('CRITTERVID_FFMPEG'):
+        return os.environ['CRITTERVID_FFMPEG']
     script_dir = app_dir()
 
     # Check in script directory first
@@ -65,11 +70,15 @@ def get_ffmpeg_path():
     # Fallback to 'ffmpeg' and hope it's in PATH
     return 'ffmpeg'
 
+@functools.lru_cache(maxsize=None)
 def get_ffprobe_path():
     """
-    Find ffprobe, which comes with FFmpeg: next to the ffmpeg in use first, then
-    the same places as ffmpeg. Returns None if it can't be found.
+    Find ffprobe, which comes with FFmpeg: CRITTERVID_FFPROBE if set, next to the
+    ffmpeg in use, then the same places as ffmpeg. Returns None if it can't be
+    found.
     """
+    if os.environ.get('CRITTERVID_FFPROBE'):
+        return os.environ['CRITTERVID_FFPROBE']
     ffmpeg = get_ffmpeg_path()
     folder = os.path.dirname(shutil.which(ffmpeg) or ffmpeg)
     for name in ('ffprobe', 'ffprobe.exe'):

@@ -13,6 +13,10 @@ TESTS_DIR = Path(__file__).resolve().parent
 SCRIPTS = ['ffmpeg_helper.py', 'media_format.py', 'convert_media.py', 'merge_videos.py', 'validate_output.py', 'process_all.py',
            'app.py']
 
+# The old script names of the pipeline steps, and their crittervid commands
+COMMANDS = {'convert_media.py': 'convert', 'merge_videos.py': 'merge', 'validate_output.py': 'validate',
+            'process_all.py': 'run'}
+
 # Matches the camera layout: DCIM/YYYY/MM/DD/<unixtimestamp>_<duration>/
 GROUP_DIR = Path('input/DCIM/2026/10/01/1759300000_0001')
 AFTERNOON_DIR = Path('input/DCIM/2026/10/01/1759330000_0001')
@@ -57,9 +61,16 @@ class Workspace:
         log = Path(self.env['FAKE_FFMPEG_LOG'])
         return [f.read_text(encoding='utf-8') for f in sorted(log.parent.glob(log.name + '-concat.*'))]
 
+    def command(self, script, *args):
+        """The command line for a pipeline step, named by its old script: the
+        crittervid command for the steps, the script itself otherwise."""
+        if script in COMMANDS:
+            return [sys.executable, '-m', 'crittervid', COMMANDS[script], *args]
+        return [sys.executable, script, *args]
+
     def run(self, script, *args):
         return subprocess.run(
-            [sys.executable, script, *args],
+            self.command(script, *args),
             cwd=self.root, env=self.env, capture_output=True,
             encoding='utf-8', errors='replace',
         )
@@ -81,6 +92,10 @@ def make_workspace(tmp_path, path_prefix=None):
         env.pop(var, None)
     # Day grouping uses the machine's local time; fix it so tests don't depend on it
     env['TZ'] = 'UTC0'
+    # `python -m crittervid` finds this copy of the package, not the checkout's
+    env['PYTHONPATH'] = os.pathsep.join([str(app / 'src')] + [p for p in env.get('PYTHONPATH', '').split(os.pathsep) if p])
+    for var in ('CRITTERVID_FFMPEG', 'CRITTERVID_FFPROBE'):
+        env.pop(var, None)
     if path_prefix:
         env['PATH'] = str(path_prefix) + os.pathsep + env['PATH']
     return Workspace(app, env)

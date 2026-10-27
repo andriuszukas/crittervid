@@ -243,7 +243,7 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if stream is not None:
             stream.reconfigure(encoding='utf-8', errors='replace')
-    parser = argparse.ArgumentParser(description='Check the converted and merged videos.')
+    parser = argparse.ArgumentParser(prog='crittervid validate', description='Check the converted and merged videos.')
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory to check (default: output)')
     parser.add_argument('--workers', type=int, default=4, help='Number of parallel checks (default: 4)')
     parser.add_argument('--deep', action='store_true',

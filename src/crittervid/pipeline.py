@@ -1,40 +1,27 @@
-import subprocess
-import signal
 import sys
 import argparse
 import os
+import traceback
 
-# The stages run as separate Python programs, as package modules: this package's
-# parent folder goes on their import path, so they find it wherever it is (a
-# checkout, an install, or the app bundle run with a system Python)
-PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONVERT_SCRIPT = 'crittervid.convert'
-MERGE_SCRIPT = 'crittervid.merge'
-VALIDATE_SCRIPT = 'crittervid.validate'
+from . import convert, merge, validate
 
 
-def stage(module, args):
-    """The command line that runs a stage."""
-    return [sys.executable, '-m', module] + args
-
-
-def stage_env():
-    paths = [PACKAGE_PARENT] + [p for p in os.environ.get('PYTHONPATH', '').split(os.pathsep) if p]
-    return dict(os.environ, PYTHONPATH=os.pathsep.join(paths))
-
-
-def run_step(cmd):
-    """Run one step of the pipeline and return its exit code. At a console,
-    Ctrl+C reaches the step too; let it stop cleanly (removing partial files and
-    writing its summary) instead of killing it, then stop the pipeline. (A stop
-    signal sent to this process alone doesn't reach the step, so it then waits
-    for the step to finish.)"""
-    proc = subprocess.Popen(cmd, env=stage_env())
+def run_step(step, args):
+    """Run one step of the pipeline in this process and return its exit code.
+    A step that rejects its options or fails unexpectedly fails only itself, as
+    when the steps were separate programs; Ctrl+C stops the whole run."""
     try:
-        return proc.wait()
-    except KeyboardInterrupt:
-        proc.wait()
-        raise
+        return step.main(args) or 0
+    except SystemExit as e:   # e.g. argparse rejected an option
+        # As Python treats it at exit: None is success, a message is printed
+        # and is a failure
+        if e.code is None or isinstance(e.code, int):
+            return e.code or 0
+        print(e.code, file=sys.stderr)
+        return 1
+    except Exception:
+        traceback.print_exc()
+        return 1
 
 
 def main(argv=None):
@@ -46,7 +33,7 @@ def main(argv=None):
         sys.stdout.reconfigure(line_buffering=True, encoding='utf-8', errors='replace')
     if sys.stderr is not None:
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    parser = argparse.ArgumentParser(description="Convert, merge and validate camera-trap videos.")
+    parser = argparse.ArgumentParser(prog='crittervid run', description="Convert, merge and validate camera-trap videos.")
     parser.add_argument('--input-dir', type=str, default='input/DCIM', help='Input directory containing .media files (default: input/DCIM)')
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory for converted .mp4 files (default: output)')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be done without running FFmpeg or modifying files.')
@@ -84,10 +71,12 @@ def main(argv=None):
 
     print("=== Step 1: Convert .media to .mp4 ===")
     if args.dry_run:
-        print(f"[DRY RUN] Would run: python -m {CONVERT_SCRIPT} {' '.join(convert_args)}")
+        print(f"[DRY RUN] Would run: crittervid convert {' '.join(convert_args)}")
         rc1 = 0
     else:
-        rc1 = run_step(stage(CONVERT_SCRIPT, convert_args))
+        rc1 = run_step(convert, convert_args)
+        if convert.STOP.is_set():   # the conversion was stopped with Ctrl+C
+            raise KeyboardInterrupt
 
     print("=== Step 2: Merge .mp4 files into longer clips ===")
     merge_summary = os.path.join(args.output_dir, 'merged', 'merge_summary.txt')
@@ -99,7 +88,7 @@ def main(argv=None):
     if args.force_merge:
         merge_args += ['--force']
     if args.dry_run:
-        print(f"[DRY RUN] Would run: python -m {MERGE_SCRIPT} {' '.join(merge_args)}")
+        print(f"[DRY RUN] Would run: crittervid merge {' '.join(merge_args)}")
         rc2 = 0
     else:
         # Remove the previous run's report first, so it can't be mistaken for this
@@ -108,7 +97,7 @@ def main(argv=None):
             os.remove(merge_summary)
         except OSError:
             pass
-        rc2 = run_step(stage(MERGE_SCRIPT, merge_args))
+        rc2 = run_step(merge, merge_args)
 
     if args.validate:
         print("=== Step 3: Validate output and directory structure ===")
@@ -122,10 +111,10 @@ def main(argv=None):
         if args.accel:
             validate_args += ['--accel', args.accel]
         if args.dry_run:
-            print(f"[DRY RUN] Would run: python -m {VALIDATE_SCRIPT} {' '.join(validate_args)}")
+            print(f"[DRY RUN] Would run: crittervid validate {' '.join(validate_args)}")
             rc3 = 0
         else:
-            rc3 = run_step(stage(VALIDATE_SCRIPT, validate_args))
+            rc3 = run_step(validate, validate_args)
     else:
         print("=== Step 3: Validation skipped (use --validate to enable) ===")
         rc3 = 0
@@ -153,12 +142,5 @@ def main(argv=None):
     return 1
 
 if __name__ == '__main__':
-    # On Windows, Ctrl+Break (how a program stops a console child) stops the
-    # pipeline like Ctrl+C
-    if hasattr(signal, 'SIGBREAK'):
-        signal.signal(signal.SIGBREAK, signal.default_int_handler)
-    try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        print("=== Stopped by user (Ctrl+C) ===")
-        sys.exit(1)
+    from .cli import main as crittervid
+    sys.exit(crittervid(['run', *sys.argv[1:]]))
