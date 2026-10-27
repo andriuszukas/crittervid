@@ -879,7 +879,7 @@ def test_merge_redoes_a_day_when_forced_or_unrecorded(ws, how):
 def test_process_all_passes_force_merge_on(ws):
     result = ws.run('process_all.py', '--dry-run', '--force-merge')
 
-    assert 'merge_videos.py' in result.stdout and '--force' in result.stdout
+    assert 'crittervid.merge' in result.stdout and '--force' in result.stdout
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='only Windows refuses to replace an open file')
