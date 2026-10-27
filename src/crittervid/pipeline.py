@@ -13,7 +13,12 @@ def run_step(step, args):
     try:
         return step.main(args) or 0
     except SystemExit as e:   # e.g. argparse rejected an option
-        return e.code if isinstance(e.code, int) else 1
+        # As Python treats it at exit: None is success, a message is printed
+        # and is a failure
+        if e.code is None or isinstance(e.code, int):
+            return e.code or 0
+        print(e.code, file=sys.stderr)
+        return 1
     except Exception:
         traceback.print_exc()
         return 1

@@ -509,7 +509,7 @@ def main(argv=None):
         with open(FAILED_FILES, 'w', **PATH_TEXT) as f:
             f.writelines(entry + '\n' for entry in list_entries(failed_files))
         print(f"Failed files list written to {FAILED_FILES} ({len(failed_files)} files)")
-        print(f"To retry failed files, run: python convert_media.py --retry-failed")
+        print("To retry failed files, run: python -m crittervid convert --retry-failed (with the same folders)")
     else:
         # Remove failed files list if all succeeded
         if FAILED_FILES.exists():

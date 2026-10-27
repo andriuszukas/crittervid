@@ -956,3 +956,15 @@ def test_ffmpeg_can_be_named_with_an_environment_variable(tmp_path, fake_ffmpeg_
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert ws.converted('0001.media').read_bytes() == b'OKgood'
+
+
+@pytest.mark.parametrize('code, expected, printed', [(None, 0, ''), (0, 0, ''), (3, 3, ''), ('no such folder', 1, 'no such folder')])
+def test_a_step_that_exits_is_reported_as_python_would(code, expected, printed, capsys):
+    import types
+    from crittervid import pipeline
+
+    def main(args):
+        raise SystemExit(code)
+
+    assert pipeline.run_step(types.SimpleNamespace(main=main), []) == expected
+    assert capsys.readouterr().err.strip() == printed
