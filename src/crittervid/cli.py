@@ -14,13 +14,12 @@ import signal
 import sys
 
 from . import __version__, log
+from .steps import STEPS
 
-# Command name -> module whose main(argv) runs it
+# Command name -> module whose main(argv) runs it: a whole run, each step, the GUI
 COMMANDS = {
     'run': 'pipeline',
-    'convert': 'convert',
-    'merge': 'merge',
-    'validate': 'validate',
+    **{step.name: step.module.split('.', 1)[1] for step in STEPS},
     'gui': 'gui.launch',
 }
 
