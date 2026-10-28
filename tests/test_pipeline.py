@@ -959,15 +959,25 @@ def test_ffmpeg_can_be_named_with_an_environment_variable(tmp_path, fake_ffmpeg_
     assert ws.converted('0001.media').read_bytes() == b'OKgood'
 
 
-@pytest.mark.parametrize('code, expected, printed', [(None, 0, ''), (0, 0, ''), (3, 3, ''), ('no such folder', 1, 'no such folder')])
-def test_a_step_that_exits_is_reported_as_python_would(code, expected, printed, capsys):
+def fake_step(monkeypatch, name, run, **fields):
+    """A Step whose run() is the given function (its module is removed again
+    after the test)."""
     import types
+    from crittervid import steps
+    module = types.ModuleType(f'test_step_{name}')
+    module.run = run
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    return steps.Step(name, module.__name__, f'Test step {name}', options=lambda config: ['--test'], **fields)
+
+
+@pytest.mark.parametrize('code, expected, printed', [(None, 0, ''), (0, 0, ''), (3, 3, ''), ('no such folder', 1, 'no such folder')])
+def test_a_step_that_exits_is_reported_as_python_would(code, expected, printed, capsys, monkeypatch):
     from crittervid import pipeline
 
     def run(config):
         raise SystemExit(code)
 
-    assert pipeline.run_step(types.SimpleNamespace(run=run), None) == expected
+    assert pipeline.run_step(fake_step(monkeypatch, 'exits', run), None) == expected
     assert capsys.readouterr().err.strip() == printed
 
 
@@ -998,7 +1008,8 @@ def test_a_steps_options_describe_its_part_of_the_config(step, monkeypatch, tmp_
     module = {'convert': convert, 'merge': merge, 'validate': validate}[step]
     monkeypatch.setattr(module, 'run', seen.append)
 
-    module.main(config.command_args(step))
+    from crittervid import steps
+    module.main(steps.get(step).options(config))
 
     fields = {'convert': ['input_dir', 'output_dir', 'accel', 'workers', 'copy', 'retry_failed', 'max_retries'],
               'merge': ['output_dir', 'splits_per_day', 'force_merge'],
@@ -1113,7 +1124,6 @@ def test_an_option_error_stays_on_stderr_and_is_logged(ws):
 
 
 def test_an_unexpected_error_prints_one_line_and_logs_its_traceback(tmp_path, monkeypatch, capsys):
-    import types
     from crittervid import log, pipeline
     from crittervid.config import PipelineConfig
     monkeypatch.setenv('CRITTERVID_LOG_DIR', str(tmp_path / 'app-logs'))
@@ -1123,7 +1133,7 @@ def test_an_unexpected_error_prints_one_line_and_logs_its_traceback(tmp_path, mo
 
     run_ = log.start_run(PipelineConfig(output_dir=tmp_path / 'out'))
     try:
-        assert pipeline.run_step(types.SimpleNamespace(run=run, __name__='crittervid.merge'), None) == 1
+        assert pipeline.run_step(fake_step(monkeypatch, 'merge', run), None) == 1
     finally:
         log.stop_run()
 
@@ -1200,3 +1210,75 @@ def test_a_failure_is_told_by_the_line_that_says_why(output, reason):
               else b'fake ffmpeg: simulated failure\n')
 
     assert log.ffmpeg_failure(stderr)[0] == reason
+
+
+# --- Steps declare themselves (#25) ---
+
+def test_a_new_step_runs_at_its_place_and_shows_in_dry_runs_and_the_summary(monkeypatch, tmp_path, capsys):
+    from crittervid import pipeline, steps
+    from crittervid.config import PipelineConfig
+    order = []
+    for name in ('convert', 'merge', 'validate'):
+        monkeypatch.setattr(f'crittervid.{name}.run', lambda config, name=name: order.append(name) or 0)
+    extra = fake_step(monkeypatch, 'detect', lambda config: order.append('detect') or 0,
+                      summary=lambda config, ran, dry_run: ['Detections: none'])
+    monkeypatch.setattr(steps, 'STEPS', steps.STEPS[:2] + (extra,) + steps.STEPS[2:])
+    from crittervid import log
+    log.start_run(None, 'run')   # so the run's lines reach the console
+
+    assert pipeline.run(PipelineConfig(output_dir=tmp_path)) == 0
+    out = capsys.readouterr().out
+    assert order == ['convert', 'merge', 'detect', 'validate']
+    assert '=== Step 3: Test step detect ===' in out and '=== Step 4: Validate output' in out
+    assert out.index('Merging summary') < out.index('Detections: none') < out.index('Validation: see console')
+
+    assert pipeline.run(PipelineConfig(output_dir=tmp_path), dry_run=True) == 0
+    assert '[DRY RUN] Would run: crittervid detect --test' in capsys.readouterr().out
+    assert order == ['convert', 'merge', 'detect', 'validate']   # nothing ran in the dry run
+
+
+def test_a_run_stopped_during_a_step_starts_no_further_step(monkeypatch, tmp_path):
+    from crittervid import pipeline, steps
+    from crittervid.config import PipelineConfig
+    order = []
+
+    def merge_stopped(config):
+        order.append('merge')
+        config.cancel.cancel()   # e.g. the GUI's Stop button
+        return 1
+
+    monkeypatch.setattr('crittervid.convert.run', lambda config: order.append('convert') or 0)
+    monkeypatch.setattr('crittervid.merge.run', merge_stopped)
+    monkeypatch.setattr('crittervid.validate.run', lambda config: order.append('validate') or 0)
+
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.run(PipelineConfig(output_dir=tmp_path))
+    assert order == ['convert', 'merge']
+
+
+def test_a_dry_run_doesnt_prepare_steps(monkeypatch, tmp_path):
+    from crittervid import pipeline
+    from crittervid.config import PipelineConfig
+    config = PipelineConfig(output_dir=tmp_path)
+    config.merge_summary.parent.mkdir(parents=True)
+    config.merge_summary.write_text('WARNING: from before\n', encoding='utf-8')
+
+    pipeline.run(config, dry_run=True)
+
+    assert config.merge_summary.exists()   # the merge's prepare (removing it) didn't run
+
+
+def test_without_validation_the_run_says_so(ws):
+    ws.add_media('0001.media', b'good')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--no-validate')
+
+    assert result.returncode == 0, result.stdout
+    assert '=== Step 3: Validation skipped (use --validate to enable) ===' in result.stdout
+    assert 'Validation: skipped' in result.stdout and 'Checking ' not in result.stdout
+
+
+def test_every_step_is_a_command():
+    from crittervid import cli, steps
+
+    assert set(cli.COMMANDS) == {'run', 'gui'} | {step.name for step in steps.STEPS}

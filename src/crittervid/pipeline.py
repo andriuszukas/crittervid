@@ -3,7 +3,7 @@ import argparse
 import logging
 import os
 
-from . import convert, log, merge, validate
+from . import log, steps
 from .config import ACCEL_CHOICES, PipelineConfig
 
 
@@ -30,7 +30,7 @@ def run_step(step, config):
         return 1
     except Exception as e:
         # The traceback goes to the logs; the console gets one line
-        _log.error(f'ERROR: {step.__name__.rsplit(".", 1)[-1]} failed unexpectedly: {e!r} (details in the log)',
+        _log.error(f'ERROR: {step.name} failed unexpectedly: {e!r} (details in the log)',
                    exc_info=True)
         return 1
 
@@ -67,54 +67,32 @@ def main(argv=None):
 
 
 def run(config, validate_output=True, dry_run=False):
-    """Convert, merge and (unless told not to) validate, in this process, with
-    one cancel token for all three steps."""
-    def step(name, module):
+    """Run the steps (crittervid.steps.STEPS) in order, in this process, with one
+    cancel token for all of them. A stop between steps ends the run."""
+    choices = {'validate': validate_output}
+    codes, ran = [], {}
+    for number, step in enumerate(steps.STEPS, 1):
+        ran[step.name] = step.enabled(config, choices)
+        if not ran[step.name]:
+            say(f"=== Step {number}: {step.skipped_title or step.title + ' (skipped)'} ===")
+            continue
+        say(f"=== Step {number}: {step.title} ===")
         if dry_run:
-            say(f"[DRY RUN] Would run: crittervid {name} {' '.join(config.command_args(name))}")
-            return 0
-        return run_step(module, config)
-
-    say("=== Step 1: Convert .media to .mp4 ===")
-    rc1 = step('convert', convert)
-    if config.cancel.is_cancelled():   # the conversion was stopped with Ctrl+C
-        raise KeyboardInterrupt
-
-    say("=== Step 2: Merge .mp4 files into longer clips ===")
-    merge_summary = config.merge_summary
-    if not dry_run:
-        # Remove the previous run's report first, so it can't be mistaken for this
-        # run's if the merge stops before writing one
-        try:
-            os.remove(merge_summary)
-        except OSError:
-            pass
-    rc2 = step('merge', merge)
-
-    if validate_output:
-        say("=== Step 3: Validate output and directory structure ===")
-        rc3 = step('validate', validate)
-    else:
-        say("=== Step 3: Validation skipped (use --validate to enable) ===")
-        rc3 = 0
+            say(f"[DRY RUN] Would run: crittervid {step.name} {' '.join(step.options(config))}")
+            codes.append(0)
+            continue
+        if step.prepare:
+            step.prepare(config)
+        codes.append(run_step(step, config))
+        if config.cancel.is_cancelled() and number < len(steps.STEPS):   # stopped (Ctrl+C, or a Stop button)
+            raise KeyboardInterrupt
 
     say("=== Summary ===")
-    say(f"Conversion summary: {config.conversion_summary}")
-    say(f"Merging summary: {merge_summary}")
-    # Repeat the merge's warnings (e.g. older merged files it kept), which are
-    # otherwise easy to miss among the step's output. The report is this run's:
-    # an earlier one was removed before the step
-    if not dry_run and os.path.isfile(merge_summary):
-        # Paths in it can be in any encoding (Linux)
-        with open(merge_summary, encoding='utf-8', errors='replace') as f:
-            for line in f:
-                if line.startswith('WARNING'):
-                    say(f"Merge {line.rstrip()}")
-    if validate_output:
-        say("Validation: see console output above")
-    else:
-        say("Validation: skipped")
-    if rc1 == 0 and rc2 == 0 and rc3 == 0:
+    for step in steps.STEPS:
+        if step.summary:
+            for line in step.summary(config, ran[step.name], dry_run):
+                say(line)
+    if all(code == 0 for code in codes):
         say("All steps completed successfully.")
         return 0
     say("Some steps failed. Check logs above and summary reports.", level=logging.ERROR)

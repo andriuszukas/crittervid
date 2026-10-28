@@ -16,7 +16,8 @@ CritterVid converts segmented `.media` files from wildlife trail cameras into `.
 - `src/crittervid/log.py` — logging for a run (`docs/decisions/0003-logging.md`): `start_run` gives it an ID and sends the `crittervid` logger to the console (messages as printed before), a JSON-lines run log in `<output>/logs/` and the app log in the OS's log folder. Each command's `main` calls it once; steps write through `log.say(logger, message)` (the level comes from the message's ERROR/WARNING prefix), never `print`, so the console text stays as it was.
 - `src/crittervid/cli.py` — the `crittervid` command (`python -m crittervid`): `run`, `convert`, `merge`, `validate`, each handing its options to that step's `main(argv)`.
 - `src/crittervid/names.py` — file-name patterns, day grouping and the split into time windows, shared by the merge and validation.
-- `src/crittervid/pipeline.py` (was `process_all.py`) — runs the three stages in order, in one process (`crittervid run`).
+- `src/crittervid/steps.py` — the steps of a run, in order (`docs/decisions/0004-steps.md`): each `Step` gives its name (its command), module, title, options for dry runs, and optionally when it's skipped, what to do before it and its summary lines. To add a step, write a module with `run(config)` and `main(argv)` and add one `Step` to `STEPS`; the runner, the CLI and the summary need no change.
+- `src/crittervid/pipeline.py` (was `process_all.py`) — `crittervid run`: runs `STEPS` in order, in one process, stopping between steps if the run is cancelled.
 - `src/crittervid/gui/` — `crittervid gui` (also the default with no command): `launch.py` (was `launcher.py`) starts Streamlit on a free local port with `streamlit_app.py` (was `app.py`), which runs the pipeline by starting `crittervid run` (the app itself when built, so no separate Python is needed).
 - `src/crittervid/ffmpeg.py` (was `ffmpeg_helper.py`) — finds FFmpeg (project folder, or `_internal` in the built app, then `PATH`).
 
