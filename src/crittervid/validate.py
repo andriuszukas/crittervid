@@ -255,8 +255,11 @@ def main(argv=None):
 
 
 def run(config):
-    """Check the videos in config.output_dir; returns 0, or 1 if a check found
-    an error."""
+    """Check the videos in config.output_dir; returns 0, 1 if a check found an
+    error, or 2 for settings it can't use."""
+    if config.workers < 1:
+        print('crittervid validate: error: --workers must be at least 1', file=sys.stderr)
+        return 2
     if not config.output_dir.is_dir():
         print(f'ERROR: output folder not found: {config.output_dir}')
         return 1

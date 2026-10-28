@@ -1034,3 +1034,15 @@ def test_a_cancelled_run_merges_nothing(ws, fake_ffmpeg_dir, monkeypatch, cancel
 
     assert merge.run(config) == (1 if cancelled else 0)
     assert len(ws.files('merged_*.mp4')) == (0 if cancelled else 1)
+
+
+@pytest.mark.parametrize('option', ['--workers', '--max-retries'])
+def test_a_run_rejects_counts_below_one_without_a_traceback(ws, option):
+    ws.add_media('0001.media', b'good')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', option, '0')
+
+    assert result.returncode == 1
+    assert 'must be at least 1' in result.stderr
+    assert 'Traceback' not in result.stdout + result.stderr
+    assert not ws.converted('0001.media').exists()

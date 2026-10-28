@@ -14,7 +14,8 @@ ACCEL_CHOICES = ('cpu', 'cuda', 'qsv', 'vaapi', 'amf', 'auto')
 class CancelToken:
     """Set when a run is being stopped (Ctrl+C now; the GUI's Stop button later,
     #42). Steps check it to stop starting work and to end what's running. One
-    token is shared by every step of a run."""
+    token is shared by every step of a run; once set it stays set, so each run
+    needs a new PipelineConfig."""
 
     def __init__(self):
         self._event = threading.Event()

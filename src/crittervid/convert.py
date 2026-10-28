@@ -385,7 +385,11 @@ def main(argv=None):
 
 def run(config):
     """Convert config.input_dir into config.output_dir; returns 0, or 1 if
-    anything failed or the run was stopped (config.cancel is then set)."""
+    anything failed or the run was stopped (config.cancel is then set), or 2
+    for settings it can't use."""
+    if config.workers < 1 or config.max_retries < 1:
+        print('crittervid convert: error: --workers and --max-retries must be at least 1', file=sys.stderr)
+        return 2
     accel = config.accel or 'auto'
     if config.copy:
         print("Using stream copy mode (--copy): will not re-encode video.")

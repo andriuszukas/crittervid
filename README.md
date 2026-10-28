@@ -89,7 +89,7 @@ crittervid run --dry-run
 `crittervid` is installed by `pip install -r requirements.txt`; `python -m crittervid` does the
 same. `crittervid --help` lists the commands, and `crittervid <command> --help` their options. The
 older script names (`python process_all.py`, `python convert_media.py`, …) still work for now,
-also from a folder where nothing is installed.
+and run from a checkout even without installing.
 
 Key options: `--accel {cpu,cuda,qsv,vaapi,amf,auto}`, `--workers N`, `--copy`
 (stream-copy without re-encoding), `--splits-per-day N`, `--no-validate`, `--deep-validate`.
