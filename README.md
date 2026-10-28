@@ -84,6 +84,9 @@ crittervid convert --retry-failed --max-retries 5
 
 # Preview without running FFmpeg
 crittervid run --dry-run
+
+# Check FFmpeg, which hardware encoders work, the output folder and disk space
+crittervid doctor --input-dir input/DCIM --output-dir output
 ```
 
 `crittervid` is installed by `pip install -r requirements.txt`; `python -m crittervid` does the

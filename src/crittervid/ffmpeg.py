@@ -5,6 +5,7 @@ import functools
 import os
 import sys
 import shutil
+import subprocess
 
 
 def app_dir():
@@ -91,3 +92,42 @@ def get_ffprobe_path():
         if os.path.isfile(candidate):
             return candidate
     return shutil.which('ffprobe')
+
+
+def tool_version(path):
+    """The version FFmpeg or ffprobe reports (e.g. '9.0.2-full_build-www.gyan.dev'),
+    or None if it can't be run."""
+    try:
+        result = subprocess.run([path, '-version'], capture_output=True, text=True, timeout=20,
+                                encoding='utf-8', errors='replace')
+    except (OSError, subprocess.SubprocessError):
+        return None
+    words = result.stdout.split()
+    return words[2] if len(words) > 2 and words[1] == 'version' else None
+
+
+# The encoder each --accel choice uses
+ENCODERS = {'cpu': 'libx264', 'cuda': 'h264_nvenc', 'qsv': 'h264_qsv', 'amf': 'h264_amf', 'vaapi': 'h264_vaapi'}
+VAAPI_DEVICE = '/dev/dri/renderD128'
+
+
+def encoder_works(accel):
+    """Whether this machine's FFmpeg can encode with an --accel choice's encoder:
+    (True, '') or (False, why). Tries a tiny generated clip, so it says whether
+    the GPU and its driver work, not only whether FFmpeg knows the encoder."""
+    from . import log
+    clip = ['-f', 'lavfi', '-i', 'color=c=black:s=256x256:r=15:d=0.4']
+    if accel == 'vaapi':
+        cmd = ['-vaapi_device', VAAPI_DEVICE, *clip, '-vf', 'format=nv12,hwupload']
+    else:
+        cmd = clip
+    cmd = [get_ffmpeg_path(), '-v', 'error', '-y', *cmd, '-frames:v', '5', '-c:v', ENCODERS[accel], '-f', 'null', '-']
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return False, 'the test encode took too long'
+    except OSError as e:
+        return False, str(e)
+    if result.returncode == 0:
+        return True, ''
+    return False, log.ffmpeg_failure(result.stderr)[0]

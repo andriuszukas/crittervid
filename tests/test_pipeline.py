@@ -1281,4 +1281,60 @@ def test_without_validation_the_run_says_so(ws):
 def test_every_step_is_a_command():
     from crittervid import cli, steps
 
-    assert set(cli.COMMANDS) == {'run', 'gui'} | {step.name for step in steps.STEPS}
+    assert set(cli.COMMANDS) == {'run', 'gui', 'doctor'} | {step.name for step in steps.STEPS}
+
+
+
+# --- crittervid doctor (#29) ---
+
+def test_doctor_reports_ffmpeg_the_encoders_the_output_and_space(ws):
+    ws.add_media('0001.media', b'good')
+    ws.env['FAKE_FFMPEG_ENCODERS'] = 'libx264,h264_amf'
+
+    result = crittervid(ws, 'doctor', '--input-dir', 'input/DCIM', '--output-dir', 'output')
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    out = result.stdout
+    assert 'OK: FFmpeg 0.0-fake at ' in out and 'OK: ffprobe 0.0-fake at ' in out
+    assert 'OK: encoder libx264 (CPU) works (--accel cpu)' in out
+    assert 'OK: encoder AMD AMF (h264_amf) works (--accel amf)' in out
+    assert 'WARNING: encoder NVIDIA NVENC (h264_nvenc) not available (--accel cuda): Cannot load h264_nvenc driver' in out
+    assert '--accel auto picks' in out
+    assert 'output can be written (it will be created in ' in out
+    assert ' free at ' in out and 'All checks passed.' in out
+    assert not (ws.root / 'output').exists()   # it creates nothing
+
+
+def test_doctor_fails_without_ffmpeg(tmp_path):
+    ws = make_workspace(tmp_path)
+    ws.env['CRITTERVID_FFMPEG'] = str(tmp_path / 'no-such-ffmpeg')
+
+    result = crittervid(ws, 'doctor')
+
+    assert result.returncode == 1
+    assert 'ERROR: FFmpeg not found' in result.stdout and 'Some checks failed' in result.stdout
+
+
+def test_doctor_fails_when_the_output_cant_go_there(ws):
+    (ws.root / 'output').write_text('a file where the output folder should be')
+
+    result = crittervid(ws, 'doctor')
+
+    assert result.returncode == 1
+    assert 'is a file, not a folder' in result.stdout
+
+
+@pytest.mark.parametrize('free, expected', [(10 ** 15, 'OK: '), (150, 'WARNING: '), (50, 'ERROR: ')])
+def test_doctor_compares_free_space_with_the_input(tmp_path, monkeypatch, capsys, free, expected):
+    import shutil
+    from crittervid import doctor, log
+    card = tmp_path / 'card' / '2025' / '10' / '01' / '1759300000_0001'
+    card.mkdir(parents=True)
+    (card / '0000.media').write_bytes(b'x' * 100)
+    monkeypatch.setattr(shutil, 'disk_usage', lambda path: shutil._ntuple_diskusage(10 ** 16, 0, free))
+    log.start_run(None, 'doctor')
+
+    problem = doctor.check_space(tmp_path / 'card', tmp_path / 'out')
+
+    line = [l for l in capsys.readouterr().out.splitlines() if ' free at ' in l][0]
+    assert line.startswith(expected) and problem == (expected == 'ERROR: ')

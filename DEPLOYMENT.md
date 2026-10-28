@@ -122,6 +122,9 @@ In the GUI, choose under **Hardware Acceleration**; on the command line, use `--
 - for the packaged app, copy `ffmpeg.exe` and `ffprobe.exe` into `CritterVid\_internal\`, or
 - when running from source, put it in the project folder.
 
+### Checking the setup
+`crittervid doctor` (with your `--input-dir` and `--output-dir`) checks that FFmpeg and ffprobe are found, tries each hardware encoder on a tiny test clip, shows which one `--accel auto` picks and whether it works, and checks the output folder and free disk space. Each line starts with OK, WARNING or ERROR.
+
 ### Finding out what went wrong
 Each run's first line names its run log (`Run <id> started; log: <path>`); the GUI shows the run ID and the log's path when the run ends. The run log has the details the console leaves out, such as FFmpeg's full error output and tracebacks. The app log, `%LOCALAPPDATA%\CritterVid\Logs\crittervid.log` on Windows, also has runs that stopped before writing any output. See the README's "Logs" section.
 

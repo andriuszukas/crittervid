@@ -37,6 +37,9 @@ ERROR = 'Invalid data found when processing input'
 
 def main():
     args = sys.argv[1:]
+    if args == ['-version']:
+        print('ffprobe version 0.0-fake Copyright (c) the CritterVid tests')
+        return
     path = Path(args[-1])
     flag = os.environ.get('FAKE_FFPROBE_FAIL_ONCE')
     if flag:

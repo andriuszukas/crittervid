@@ -15,6 +15,10 @@ named <FAKE_FFMPEG_LOG>.<pid>.<id>. A concat list is also copied to
 If FAKE_FFMPEG_FAIL_HWACCEL is set, any call with -hwaccel fails, like a machine
 whose GPU can't decode the file.
 
+`-version` prints a version line. A test encode of a generated clip (`-f lavfi`)
+works for the encoders named in FAKE_FFMPEG_ENCODERS (comma-separated; by
+default libx264) and fails like a missing GPU for any other.
+
 If FAKE_FFMPEG_SLEEP is set, a conversion first writes its partial output and
 then takes that many seconds, like a long encode (unless its input contains
 b'FAST').
@@ -76,6 +80,16 @@ def main():
         log = f"{os.environ['FAKE_FFMPEG_LOG']}.{os.getpid()}.{uuid.uuid4().hex}"
         with open(log, 'w', encoding='utf-8') as f:
             f.write(json.dumps(args))
+    if args == ['-version']:
+        print('ffmpeg version 0.0-fake Copyright (c) the CritterVid tests')
+        return
+    if '-f' in args and args[args.index('-f') + 1] == 'lavfi':
+        encoder = args[args.index('-c:v') + 1]
+        if encoder in os.environ.get('FAKE_FFMPEG_ENCODERS', 'libx264').split(','):
+            return
+        print(f'[enc:{encoder} @ 0x0] Cannot load {encoder} driver', file=sys.stderr)
+        print('Conversion failed!', file=sys.stderr)
+        sys.exit(1)
     if os.environ.get('FAKE_FFMPEG_FAIL_HWACCEL') and '-hwaccel' in args:
         print('fake ffmpeg: hardware decoding failed', file=sys.stderr)
         sys.exit(1)
