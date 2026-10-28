@@ -13,6 +13,7 @@ CritterVid converts segmented `.media` files from wildlife trail cameras into `.
 - `src/crittervid/merge.py` (was `merge_videos.py`) — groups converted files by day and joins them with FFmpeg's concat demuxer (`inpoint 0` per file, audio re-encoded once) into one file per `--splits-per-day` time window (an event goes in the window it starts in).
 - `src/crittervid/validate.py` (was `validate_output.py`) — fast checks with ffprobe: event files have video and audio of matching length, merged days match the sum of their files (grouped like the merge), names are as expected. `--deep` decodes every file once.
 - `src/crittervid/config.py` — `PipelineConfig` (a run's settings and the paths derived from them) and the `CancelToken` shared by every step of a run; each step has `run(config)`, and its `main(argv)` only turns options into a config.
+- `src/crittervid/log.py` — logging for a run (`docs/decisions/0003-logging.md`): `start_run` gives it an ID and sends the `crittervid` logger to the console (messages as printed before), a JSON-lines run log in `<output>/logs/` and the app log in the OS's log folder. Not used by the steps yet.
 - `src/crittervid/cli.py` — the `crittervid` command (`python -m crittervid`): `run`, `convert`, `merge`, `validate`, each handing its options to that step's `main(argv)`.
 - `src/crittervid/names.py` — file-name patterns, day grouping and the split into time windows, shared by the merge and validation.
 - `src/crittervid/pipeline.py` (was `process_all.py`) — runs the three stages in order, in one process (`crittervid run`).
