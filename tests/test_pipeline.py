@@ -1284,7 +1284,6 @@ def test_every_step_is_a_command():
     assert set(cli.COMMANDS) == {'run', 'gui', 'doctor'} | {step.name for step in steps.STEPS}
 
 
-
 # --- crittervid doctor (#29) ---
 
 def test_doctor_reports_ffmpeg_the_encoders_the_output_and_space(ws):
@@ -1338,3 +1337,34 @@ def test_doctor_compares_free_space_with_the_input(tmp_path, monkeypatch, capsys
 
     line = [l for l in capsys.readouterr().out.splitlines() if ' free at ' in l][0]
     assert line.startswith(expected) and problem == (expected == 'ERROR: ')
+
+
+
+@pytest.mark.parametrize('output, reason', [
+    ('encoder_h264_nvenc.txt', 'Cannot load nvcuda.dll'),
+    ('encoder_h264_qsv.txt', 'Error creating a MFX session: -9.'),
+])
+def test_an_encoder_failure_is_told_by_the_encoders_own_line(output, reason):
+    # Real FFmpeg 9.0.2 on a machine without NVIDIA or Intel graphics
+    from crittervid import ffmpeg
+    stderr = (Path(__file__).parent / 'ffmpeg_errors' / output).read_bytes()
+    encoder = output[len('encoder_'):-len('.txt')]
+
+    assert ffmpeg.encoder_failure(encoder, stderr) == reason
+
+
+def test_doctor_reports_an_output_folder_it_cant_write(tmp_path, monkeypatch, capsys):
+    import builtins
+    from crittervid import doctor, log
+    real_open = builtins.open
+
+    def refusing_open(path, mode='r', *args, **kwargs):
+        if 'x' in mode:
+            raise PermissionError(13, 'Access is denied', str(path))
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, 'open', refusing_open)
+    log.start_run(None, 'doctor')
+
+    assert doctor.check_output(tmp_path) is True
+    assert "ERROR: can't write to" in capsys.readouterr().out

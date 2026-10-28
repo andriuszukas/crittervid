@@ -130,4 +130,20 @@ def encoder_works(accel):
         return False, str(e)
     if result.returncode == 0:
         return True, ''
-    return False, log.ffmpeg_failure(result.stderr)[0]
+    return False, encoder_failure(ENCODERS[accel], result.stderr)
+
+
+def encoder_failure(encoder, stderr):
+    """Why an encoder couldn't be used: its own first error line, such as
+    "Cannot load nvcuda.dll" (no NVIDIA driver) or "Error creating a MFX
+    session", which FFmpeg's later lines ("Could not open encoder before EOF")
+    don't say; otherwise the line logging picks."""
+    from . import log
+    own = f'[{encoder} @'
+    for line in stderr.decode('utf-8', errors='replace').splitlines():
+        line = line.strip()
+        if line.startswith(own) and ']' in line:
+            reason = line.split(']', 1)[1].strip()
+            if reason:
+                return reason
+    return log.ffmpeg_failure(stderr)[0]

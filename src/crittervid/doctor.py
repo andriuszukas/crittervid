@@ -14,7 +14,6 @@ import os
 import platform
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 from . import __version__, log
@@ -116,11 +115,15 @@ def check_output(output_dir):
     if target.exists() and not target.is_dir():
         say(f'ERROR: {target} is a file, not a folder: the output can\'t go there')
         return True
+    # One file, created and removed: Python's temporary-file helper takes a
+    # refused file on Windows for a name in use and retries thousands of times
+    test_file = where / f'.crittervid-check-{os.getpid()}'
     try:
-        with tempfile.NamedTemporaryFile(dir=where, prefix='.crittervid-check-'):
+        with open(test_file, 'xb'):
             pass
+        test_file.unlink()
     except OSError as e:
-        say(f'ERROR: can\'t write to {where} ({e}), where the output folder {target} would be')
+        say(f'ERROR: can\'t write to {where} ({e})' + ('' if where == target else f', where the output folder {target} would be created'))
         return True
     say(f'OK: {target} can be written' + ('' if target.is_dir() else f' (it will be created in {where})'))
     return False
@@ -134,7 +137,11 @@ def check_space(input_dir, output_dir):
     except OSError as e:
         say(f'WARNING: free space at {where} unknown ({e})')
         return False
-    needed = _size(input_dir) if Path(input_dir).is_dir() else 0
+    if Path(input_dir).is_dir():
+        say(f'Measuring the .media files in {input_dir}...')
+        needed = _size(input_dir)
+    else:
+        needed = 0
     if not needed:
         say(f'OK: {_gb(free)} free at {where} (no .media files found in {input_dir} to compare with)')
         return False
