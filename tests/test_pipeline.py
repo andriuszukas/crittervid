@@ -985,7 +985,7 @@ def test_a_config_names_the_files_of_a_run():
 
 
 @pytest.mark.parametrize('step', ['convert', 'merge', 'validate'])
-def test_a_steps_options_describe_its_part_of_the_config(step, monkeypatch):
+def test_a_steps_options_describe_its_part_of_the_config(step, monkeypatch, tmp_path):
     # What a dry run shows must be what the step would do: its options give back
     # the same settings
     from crittervid import config as config_module, convert, merge, validate
@@ -993,6 +993,7 @@ def test_a_steps_options_describe_its_part_of_the_config(step, monkeypatch):
     config = PipelineConfig(input_dir='in', output_dir='out', accel='cpu', workers=3, copy=True,
                             retry_failed=True, max_retries=5, splits_per_day=4, force_merge=True,
                             deep_validate=True)
+    monkeypatch.chdir(tmp_path)   # main() logs its run, into ./out/logs here
     seen = []
     module = {'convert': convert, 'merge': merge, 'validate': validate}[step]
     monkeypatch.setattr(module, 'run', seen.append)

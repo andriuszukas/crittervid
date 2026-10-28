@@ -22,8 +22,8 @@ CONTENTS_NAME = 'merged_contents.json'
 _log = log.get('merge')
 
 
-def say(message, **extra):
-    log.say(_log, message, **extra)
+def say(message, level=None, **extra):
+    log.say(_log, message, level, **extra)
 
 
 def find_mp4_files(root):

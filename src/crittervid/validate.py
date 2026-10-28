@@ -58,8 +58,8 @@ class Probe:
 _log = log.get('validate')
 
 
-def say(message, **extra):
-    log.say(_log, message, **extra)
+def say(message, level=None, **extra):
+    log.say(_log, message, level, **extra)
 
 
 def _probe_once(path):
@@ -279,10 +279,10 @@ def run(config):
     deep = config.deep_validate
     if not get_ffprobe_path():
         say('ffprobe not found (it comes with FFmpeg): only checking that every file decodes. '
-              'Install ffprobe for the full checks of audio, lengths and merged days.')
+            'Install ffprobe for the full checks of audio, lengths and merged days.', level=logging.WARNING)
         deep = True
     say(f'Checking {len(converted)} converted and {len(merged)} merged videos'
-          f'{" (decoding each in full)" if deep else ""}...')
+        f'{" (decoding each in full)" if deep else ""}...')
 
     problems = check_names(converted, merged)
     try:
@@ -305,17 +305,17 @@ def run(config):
                 results = list(executor.map(lambda p: decodes(p, input_opts), converted + merged))
             problems += [f'ERROR: {p}: does not decode' for p, ok in zip(converted + merged, results) if not ok]
     except KeyboardInterrupt:
-        say('\nValidation interrupted by user (Ctrl+C). Partial results shown below.')
+        say('\nValidation interrupted by user (Ctrl+C). Partial results shown below.', level=logging.WARNING)
         problems.append('ERROR: validation stopped by user before it finished')
 
     for line in problems:
         say(line)
     errors = sum(1 for line in problems if line.startswith('ERROR'))
     if errors:
-        say(f'\nValidation found {errors} problem{"s" if errors != 1 else ""}.')
+        say(f'\nValidation found {errors} problem{"s" if errors != 1 else ""}.', level=logging.ERROR)
         if any(line.startswith('ERROR') and 'merged' in line for line in problems):
             say('Merged files are skipped while their events stay the same; to make them again, merge with '
-                  '--force (process_all.py --force-merge, or "Merge everything again" in the app).')
+                '--force (process_all.py --force-merge, or "Merge everything again" in the app).')
         return 1
     say('All output videos passed the checks.')
     return 0

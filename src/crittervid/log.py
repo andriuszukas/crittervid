@@ -51,10 +51,10 @@ def level_of(message):
     return logging.INFO
 
 
-def say(logger, message, **extra):
-    """Log a message at the level its wording gives it (see level_of); the
-    console shows it exactly as written."""
-    logger.log(level_of(message), message, extra=extra or None)
+def say(logger, message, level=None, **extra):
+    """Log a message at `level`, or the level its wording gives it (see
+    level_of); the console shows it exactly as written."""
+    logger.log(level_of(message) if level is None else level, message, extra=extra or None)
 
 
 def file_only(logger, level, message, **extra):

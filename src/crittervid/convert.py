@@ -29,8 +29,8 @@ _running_lock = threading.Lock()
 _log = log.get('convert')
 
 
-def say(message, **extra):
-    log.say(_log, message, **extra)
+def say(message, level=None, **extra):
+    log.say(_log, message, level, **extra)
 
 
 def run_ffmpeg(cmd, cancel):
@@ -408,7 +408,7 @@ def run(config):
         else:
             say(f"Using acceleration: {accel}")
         if accel not in ACCEL_OPTIONS:
-            say(f"Unknown acceleration type: {accel}. Falling back to CPU.")
+            say(f"Unknown acceleration type: {accel}. Falling back to CPU.", level=logging.WARNING)
             accel = 'cpu'
 
     # Determine which files to process
@@ -455,7 +455,7 @@ def run(config):
                 for future in done:
                     collect(future)
         except KeyboardInterrupt:
-            say("\nConversion interrupted by user (Ctrl+C). Stopping FFmpeg and writing partial summary...")
+            say("\nConversion interrupted by user (Ctrl+C). Stopping FFmpeg and writing partial summary...", level=logging.WARNING)
             # Queued events don't start, and the running ones stop and remove
             # their partial files; they're converted again on the next run
             stop_ffmpeg(config.cancel)
@@ -512,7 +512,7 @@ def run(config):
             say(f"Failed files list written to {config.failed_list} ({len(listed)} files)")
         elif config.retry_failed or retry_count:
             config.failed_list.unlink(missing_ok=True)   # everything it was retrying is done
-        say("Conversion stopped before it finished; run it again to convert the rest.")
+        say("Conversion stopped before it finished; run it again to convert the rest.", level=logging.WARNING)
     elif failed_files:
         with open(config.failed_list, 'w', **PATH_TEXT) as f:
             f.writelines(entry + '\n' for entry in list_entries(failed_files))

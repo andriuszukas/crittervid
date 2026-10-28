@@ -10,8 +10,8 @@ from .config import ACCEL_CHOICES, PipelineConfig
 _log = log.get('run')
 
 
-def say(message, **extra):
-    log.say(_log, message, **extra)
+def say(message, level=None, **extra):
+    log.say(_log, message, level, **extra)
 
 
 def run_step(step, config):
@@ -117,7 +117,7 @@ def run(config, validate_output=True, dry_run=False):
     if rc1 == 0 and rc2 == 0 and rc3 == 0:
         say("All steps completed successfully.")
         return 0
-    say("Some steps failed. Check logs above and summary reports.")
+    say("Some steps failed. Check logs above and summary reports.", level=logging.ERROR)
     return 1
 
 if __name__ == '__main__':

@@ -128,6 +128,16 @@ def ws(tmp_path, fake_ffmpeg_dir):
     return make_workspace(tmp_path, fake_ffmpeg_dir)
 
 
+@pytest.fixture(autouse=True)
+def own_app_log(tmp_path, monkeypatch):
+    """Tests that run CritterVid in this process log to their own folder, never
+    the user's app log, and leave logging switched off afterwards."""
+    monkeypatch.setenv('CRITTERVID_LOG_DIR', str(tmp_path / 'app-logs'))
+    yield
+    from crittervid import log
+    log.stop_run()
+
+
 def require(available, what):
     """Skip the test if a dependency is missing, or fail when CRITTERVID_REQUIRE_DEPS
     is set (as on CI), so a broken install can't silently skip tests."""

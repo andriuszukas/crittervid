@@ -21,3 +21,6 @@ ffmpeg
 
 # Created by pip install -e .
 *.egg-info/
+
+# Output of a pipeline run in the project folder
+out/
