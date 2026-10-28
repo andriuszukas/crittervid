@@ -8,14 +8,11 @@ import re
 import argparse
 import sys
 from . import media_format
+from .config import PipelineConfig
 from .ffmpeg import PATH_TEXT, get_ffmpeg_path, get_ffprobe_path, media_arg
 from .names import (FILENAME_RE, MERGED_NAME, MINUTES_PER_DAY, UNSET_CLOCK_MERGES, file_start,  # noqa: F401
                     group_files_by_day, part_name, split_day, unset_clock_day, unset_clock_files)
 
-OUTPUT_ROOT = Path('output')
-MERGED_ROOT = Path('output/merged')
-SEGMENT_DURATION_HOURS = 12
-SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
 
 # Each day's merged folder keeps a record of the converted files each merged file
 # was made from, so older merged files are only deleted when nothing is lost
@@ -57,14 +54,14 @@ def up_to_date(out_path, sources, files, record):
         return False
 
 
-def merge_group(start, end, files, summary, record, k, n, force=False):
-    out_dir = MERGED_ROOT / start.strftime('%Y/%m/%d')
+def merge_group(start, end, files, summary, record, k, n, config):
+    out_dir = config.merged_dir / start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
     start_str = start.strftime('%Y%m%d_%H%M')
     out_name = part_name(start, end, k, n)
     out_path = out_dir / out_name
-    sources = [source_name(f) for _, f in files]
-    if not force and up_to_date(out_path, sources, files, record):
+    sources = [source_name(f, config) for _, f in files]
+    if not config.force_merge and up_to_date(out_path, sources, files, record):
         msg = f"SKIPPED: {out_path} is up to date ({len(files)} files)"
         print(msg)
         summary.append(msg)
@@ -147,10 +144,10 @@ def merge_group(start, end, files, summary, record, k, n, force=False):
     return out_path
 
 
-def source_name(path):
+def source_name(path, config):
     """How the contents record names a converted file: its path in the output
     folder, with forward slashes on every system."""
-    return Path(os.path.relpath(path, OUTPUT_ROOT)).as_posix()
+    return Path(os.path.relpath(path, config.output_dir)).as_posix()
 
 
 def read_contents(day_dir):
@@ -185,7 +182,7 @@ def write_contents(day_dir, record, summary):
         return False
 
 
-def remove_stale_merges(day_dir, written, summary, day_files, record):
+def remove_stale_merges(day_dir, written, summary, day_files, record, config):
     """Delete merged files left in a day's folder by an earlier --splits-per-day
     setting: they repeat the footage this run just merged.
 
@@ -205,7 +202,7 @@ def remove_stale_merges(day_dir, written, summary, day_files, record):
         m = MERGED_NAME.fullmatch(f.name)
         if f not in written and m:
             sets.setdefault(m.group(2), []).append(f)
-    current = {source_name(f) for f in day_files}
+    current = {source_name(f, config) for f in day_files}
     for n, stale in sorted(sets.items(), key=lambda item: item[0] or ''):
         setting = f'{n} per day' if n else 'one per day'
         kept = f"kept {len(stale)} merged files ({setting}) in {day_dir} from an earlier split setting"
@@ -246,16 +243,20 @@ def main(argv=None):
                         'already up to date (by default they are skipped), e.g. after upgrading to a '
                         'version that merges differently.')
     args = parser.parse_args(argv)
-    if not 1 <= args.splits_per_day <= MINUTES_PER_DAY:
-        parser.error(f'--splits-per-day must be 1 to {MINUTES_PER_DAY} (windows are whole minutes)')
 
     # Update global paths based on arguments
-    global OUTPUT_ROOT, MERGED_ROOT, SUMMARY_REPORT
-    OUTPUT_ROOT = Path(args.output_dir)
-    MERGED_ROOT = OUTPUT_ROOT / 'merged'
-    SUMMARY_REPORT = MERGED_ROOT / 'merge_summary.txt'
+    return run(PipelineConfig(output_dir=args.output_dir, splits_per_day=args.splits_per_day, force_merge=args.force))
 
-    mp4_files = list(find_mp4_files(OUTPUT_ROOT))
+
+def run(config):
+    """Merge the converted files in config.output_dir into days (or parts of
+    days); returns 0, 1 if a part failed, or 2 for a split it can't use."""
+    if not 1 <= config.splits_per_day <= MINUTES_PER_DAY:
+        print(f'crittervid merge: error: --splits-per-day must be 1 to {MINUTES_PER_DAY} (windows are whole minutes)',
+              file=sys.stderr)
+        return 2
+
+    mp4_files = list(find_mp4_files(config.output_dir))
     groups = group_files_by_day(mp4_files)
     summary = []
     failed = 0
@@ -264,7 +265,7 @@ def main(argv=None):
         summary.append(f"WARNING: {msg}")
 
     # Files the converter didn't write (e.g. copied in by hand) aren't merged; say so
-    unknown = sorted(f for f in mp4_files if not FILENAME_RE.search(str(f)) and MERGED_ROOT not in f.parents)
+    unknown = sorted(f for f in mp4_files if not FILENAME_RE.search(str(f)) and config.merged_dir not in f.parents)
     if unknown:
         warn(f"{len(unknown)} .mp4 files weren't merged: their names aren't ones the converter writes "
              f"(<start time>_<length>[_<offset>].mp4), e.g. {unknown[0]}")
@@ -275,34 +276,38 @@ def main(argv=None):
              f"clock was set, so their real time is unknown (e.g. {unset[0]})")
     # Earlier versions merged such events into a day of their own; say so rather
     # than delete it, as the record that would show what it holds doesn't exist
-    for day_dir in sorted(MERGED_ROOT.glob('*/*/*')):
-        if (day_dir.is_dir() and unset_clock_day(day_dir.relative_to(MERGED_ROOT).as_posix())
+    for day_dir in sorted(config.merged_dir.glob('*/*/*')):
+        if (day_dir.is_dir() and unset_clock_day(day_dir.relative_to(config.merged_dir).as_posix())
                 and any(MERGED_NAME.fullmatch(f.name) for f in day_dir.iterdir())):
             warn(f"{day_dir} {UNSET_CLOCK_MERGES}")
-    n = args.splits_per_day
+    n = config.splits_per_day
     for day_start, files in groups.items():
-        day_dir = MERGED_ROOT / day_start.strftime('%Y/%m/%d')
+        if config.cancel.is_cancelled():   # the run is being stopped: merge nothing more
+            warn("merging stopped before it finished; run it again to merge the rest")
+            failed += 1
+            break
+        day_dir = config.merged_dir / day_start.strftime('%Y/%m/%d')
         record = read_contents(day_dir)
         written, day_failed = set(), False
         for k, start, end, split_files in split_day(day_start, files, n):
             if not split_files:
                 continue
-            out_path = merge_group(start, end, split_files, summary, record, k, n, force=args.force)
+            out_path = merge_group(start, end, split_files, summary, record, k, n, config)
             if out_path:
                 written.add(out_path)
             else:
                 failed += 1
                 day_failed = True
         if not day_failed:   # keep older files if this day's merge didn't complete
-            remove_stale_merges(day_dir, written, summary, [f for _, f in files], record)
+            remove_stale_merges(day_dir, written, summary, [f for _, f in files], record, config)
         if day_dir.is_dir():
             write_contents(day_dir, record, summary)
     # Write summary report
-    MERGED_ROOT.mkdir(parents=True, exist_ok=True)
-    with open(SUMMARY_REPORT, 'w', **PATH_TEXT) as f:
+    config.merged_dir.mkdir(parents=True, exist_ok=True)
+    with open(config.merge_summary, 'w', **PATH_TEXT) as f:
         for line in summary:
             f.write(line + '\n')
-    print(f"Summary report written to {SUMMARY_REPORT}")
+    print(f"Summary report written to {config.merge_summary}")
 
     return 1 if failed else 0
 

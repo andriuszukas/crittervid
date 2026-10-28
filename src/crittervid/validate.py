@@ -22,11 +22,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import names
+from .config import ACCEL_CHOICES, PipelineConfig
 from .ffmpeg import get_ffmpeg_path, get_ffprobe_path, media_arg
 
-OUTPUT_ROOT = Path('output')
-MERGED_ROOT = Path('output/merged')
-FFPROBE = None
 
 EVENT_FILE = re.compile(r'\d{10,}_\d+\.mp4')
 SEGMENT_FILE = re.compile(r'\d{10,}_\d+_\d+\.mp4')
@@ -58,7 +56,7 @@ class Probe:
 
 def _probe_once(path):
     result = subprocess.run(
-        [FFPROBE, '-v', 'error', '-show_entries', 'format=format_name:stream=codec_type,start_time,duration',
+        [get_ffprobe_path(), '-v', 'error', '-show_entries', 'format=format_name:stream=codec_type,start_time,duration',
          '-of', 'json', media_arg(path)],
         capture_output=True, text=True, encoding='utf-8', errors='replace')
     if result.returncode != 0:
@@ -94,14 +92,14 @@ def decodes(path, input_opts):
     return False
 
 
-def output_files():
+def output_files(config):
     """(converted, merged) .mp4 files under the output folder."""
     converted, merged = [], []
-    for dirpath, _, filenames in os.walk(OUTPUT_ROOT):
+    for dirpath, _, filenames in os.walk(config.output_dir):
         for name in filenames:
             if name.endswith('.mp4'):
                 path = Path(dirpath) / name
-                (merged if MERGED_ROOT in path.parents else converted).append(path)
+                (merged if config.merged_dir in path.parents else converted).append(path)
     return sorted(converted), sorted(merged)
 
 
@@ -181,13 +179,13 @@ def check_merged_part(label, part, sources, probes):
     return problems
 
 
-def check_merged_days(converted, merged, probes):
+def check_merged_days(converted, merged, probes, config):
     """Compare each merged file with the converted files it was made from,
     grouped and split the same way the merge step does it."""
     found = defaultdict(list)
     for path in merged:
         if MERGED_FILE.fullmatch(path.name):   # other names only get the name warning
-            found[path.parent.relative_to(MERGED_ROOT).as_posix()].append(path)
+            found[path.parent.relative_to(config.merged_dir).as_posix()].append(path)
 
     problems = []
     for day_start, files in sorted(names.group_files_by_day(converted).items()):
@@ -230,7 +228,7 @@ def check_merged_days(converted, merged, probes):
                          for k, part in sorted(set_parts.items()) if not 1 <= k <= n]
     for day in sorted(found):
         if names.unset_clock_day(day):
-            problems.append(f'WARNING: {MERGED_ROOT / day} {names.UNSET_CLOCK_MERGES}')
+            problems.append(f'WARNING: {config.merged_dir / day} {names.UNSET_CLOCK_MERGES}')
         else:
             problems.append(f'WARNING: merged files for {day} have no matching converted files')
     return problems
@@ -248,24 +246,27 @@ def main(argv=None):
     parser.add_argument('--workers', type=int, default=4, help='Number of parallel checks (default: 4)')
     parser.add_argument('--deep', action='store_true',
                         help='Also decode every file in full, to check FFmpeg can get through each one (slow: about as long as the footage)')
-    parser.add_argument('--accel', choices=['cpu', 'cuda', 'qsv', 'vaapi', 'amf', 'auto'], default=None,
+    parser.add_argument('--accel', choices=ACCEL_CHOICES, default=None,
                         help='Hardware decoding for --deep (default: none); files that fail are retried on the CPU')
     args = parser.parse_args(argv)
 
-    global OUTPUT_ROOT, MERGED_ROOT, FFPROBE
-    OUTPUT_ROOT = Path(args.output_dir)
-    MERGED_ROOT = OUTPUT_ROOT / 'merged'
-    if not OUTPUT_ROOT.is_dir():
-        print(f'ERROR: output folder not found: {OUTPUT_ROOT}')
-        return 1
-    FFPROBE = get_ffprobe_path()
+    return run(PipelineConfig(output_dir=args.output_dir, workers=args.workers, deep_validate=args.deep,
+                              accel=args.accel))
 
-    converted, merged = output_files()
+
+def run(config):
+    """Check the videos in config.output_dir; returns 0, or 1 if a check found
+    an error."""
+    if not config.output_dir.is_dir():
+        print(f'ERROR: output folder not found: {config.output_dir}')
+        return 1
+
+    converted, merged = output_files(config)
     if not converted and not merged:
-        print(f'No output videos in {OUTPUT_ROOT} to check.')
+        print(f'No output videos in {config.output_dir} to check.')
         return 0
-    deep = args.deep
-    if not FFPROBE:
+    deep = config.deep_validate
+    if not get_ffprobe_path():
         print('ffprobe not found (it comes with FFmpeg): only checking that every file decodes. '
               'Install ffprobe for the full checks of audio, lengths and merged days.')
         deep = True
@@ -274,22 +275,22 @@ def main(argv=None):
 
     problems = check_names(converted, merged)
     try:
-        if FFPROBE:
-            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        if get_ffprobe_path():
+            with ThreadPoolExecutor(max_workers=config.workers) as executor:
                 probes = dict(zip(converted + merged, executor.map(probe, converted + merged)))
             for path in converted:
                 problems += check_converted(path, probes[path])
             for path in merged:
                 problems += check_file(path, probes[path])
             if merged:
-                problems += check_merged_days(converted, merged, probes)
+                problems += check_merged_days(converted, merged, probes, config)
             elif converted:
                 print('No merged files yet, so merged days are not checked.')
         if deep:
             from .convert import ACCEL_OPTIONS, detect_accel
-            accel = detect_accel() if args.accel == 'auto' else args.accel
+            accel = detect_accel() if config.accel == 'auto' else config.accel
             input_opts = ACCEL_OPTIONS.get(accel, ([], []))[0]
-            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            with ThreadPoolExecutor(max_workers=config.workers) as executor:
                 results = list(executor.map(lambda p: decodes(p, input_opts), converted + merged))
             problems += [f'ERROR: {p}: does not decode' for p, ok in zip(converted + merged, results) if not ok]
     except KeyboardInterrupt:

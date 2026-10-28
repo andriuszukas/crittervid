@@ -21,7 +21,7 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
   with events becomes one file named after its window. An event belongs to the window it starts in.
   A part whose events haven't changed since it was merged is skipped on later runs. To merge
   everything again, e.g. after upgrading to a version that merges differently, use `--force`
-  (`--force-merge` in `process_all.py`, "Merge everything again" in the app); a merged file
+  (`--force-merge` with `crittervid run`, "Merge everything again" in the app); a merged file
   replaced or edited by hand isn't noticed otherwise. Merging a day again with a
   different number replaces that day's earlier merged files, unless they hold
   footage the new ones don't (e.g. after deleting converted files to save space). Each day's
@@ -31,7 +31,7 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
   each merged day is as long as its events, and every file has an expected name. `--deep-validate`
   also decodes everything in full (about as long as the footage).
 - **Robust** — skips already-converted files, retries failures, handles Ctrl+C gracefully, and writes summary reports.
-- **GUI or CLI** — a Streamlit web UI, or run each stage directly from the terminal.
+- **GUI or CLI** — a Streamlit web UI, or the `crittervid` command in a terminal.
 
 ## Requirements
 
@@ -43,7 +43,8 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
   ```bash
   pip install -r requirements.txt
   ```
-  This installs the GUI and the optional GPU detection. The command-line scripts need no packages. To build the app or run the tests, install `requirements-dev.txt` instead.
+  This installs the `crittervid` command, the GUI and the optional GPU detection. The pipeline itself
+  needs no other packages. To build the app or run the tests, install `requirements-dev.txt` instead.
 
 ## Input layout
 
@@ -61,14 +62,9 @@ when an event's footage doesn't match its length.
 
 ### GUI (recommended)
 
-On Windows, double-click `run_app.bat` and open the address it prints (usually http://localhost:8501).
-On any platform, run this from the project folder; it opens your browser:
-
-```bash
-streamlit run app.py
-```
-
-The first time, Streamlit asks for an email address in the terminal; press Enter to skip.
+Run `crittervid gui`, or just `crittervid`, and open the address it prints (usually
+http://localhost:8501). On Windows you can also double-click `run_app.bat`. In the packaged app,
+double-click `CritterVid.exe`.
 
 Select the input and output folders, choose hardware acceleration, and click **Run**.
 
@@ -76,19 +72,24 @@ Select the input and output folders, choose hardware acceleration, and click **R
 
 ```bash
 # Full pipeline: convert -> merge -> validate
-python process_all.py --input-dir input/DCIM --output-dir output --accel cuda
+crittervid run --input-dir input/DCIM --output-dir output --accel cuda
 
-# Individual stages
-python convert_media.py --input-dir input/DCIM --output-dir output --accel cuda
-python merge_videos.py --output-dir output --splits-per-day 2
-python validate_output.py --output-dir output            # add --deep to decode every file
+# Individual steps
+crittervid convert --input-dir input/DCIM --output-dir output --accel cuda
+crittervid merge --output-dir output --splits-per-day 2
+crittervid validate --output-dir output            # add --deep to decode every file
 
-# Retry only files that failed a previous run
-python convert_media.py --retry-failed --max-retries 5
+# Retry only the files that failed in the previous run
+crittervid convert --retry-failed --max-retries 5
 
 # Preview without running FFmpeg
-python process_all.py --dry-run
+crittervid run --dry-run
 ```
+
+`crittervid` is installed by `pip install -r requirements.txt`; `python -m crittervid` does the
+same. `crittervid --help` lists the commands, and `crittervid <command> --help` their options. The
+older script names (`python process_all.py`, `python convert_media.py`, …) still work for now,
+also from a folder where nothing is installed.
 
 Key options: `--accel {cpu,cuda,qsv,vaapi,amf,auto}`, `--workers N`, `--copy`
 (stream-copy without re-encoding), `--splits-per-day N`, `--no-validate`, `--deep-validate`.

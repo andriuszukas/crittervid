@@ -11,12 +11,9 @@ import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import platform
 from . import media_format
+from .config import ACCEL_CHOICES, PipelineConfig
 from .ffmpeg import PATH_TEXT, get_ffmpeg_path, media_arg
 
-INPUT_ROOT = Path('input/DCIM')
-OUTPUT_ROOT = Path('output')
-SUMMARY_REPORT = OUTPUT_ROOT / 'conversion_summary.txt'
-FAILED_FILES = OUTPUT_ROOT / 'conversion_failed.txt'
 
 class Stopped(BaseException):
     """The run was stopped (Ctrl+C) before this conversion could finish. Not an
@@ -24,17 +21,16 @@ class Stopped(BaseException):
 
 
 # Set on Ctrl+C: no new FFmpeg starts, and the running ones are ended
-STOP = threading.Event()
 _running = set()
 _running_lock = threading.Lock()
 
 
-def run_ffmpeg(cmd):
+def run_ffmpeg(cmd, cancel):
     """Run FFmpeg like subprocess.run(cmd, capture_output=True), but so that
     stop_ffmpeg() can end it. Raises Stopped instead of starting it once the run
-    is stopping, and if it fails because the run was stopped."""
+    is stopping (the cancel token is set), and if it fails because of that."""
     with _running_lock:
-        if STOP.is_set():
+        if cancel.is_cancelled():
             raise Stopped
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         _running.add(proc)
@@ -46,16 +42,17 @@ def run_ffmpeg(cmd):
     # A console's Ctrl+C reaches FFmpeg slightly before the run starts stopping
     # (the main thread checks every 0.5 s), so give a failure that long to turn
     # out to be the stop rather than a failed conversion
-    if proc.returncode != 0 and STOP.wait(0.6):
+    if proc.returncode != 0 and cancel.wait(0.6):
         raise Stopped
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
-def stop_ffmpeg():
-    """Stop starting FFmpeg and end the running ones. A console's Ctrl+C reaches
-    them too, but not when the run is stopped some other way."""
+def stop_ffmpeg(cancel):
+    """Stop the run: no new FFmpeg starts, and the running ones are ended. A
+    console's Ctrl+C reaches them too, but not when the run is stopped some other
+    way."""
     with _running_lock:
-        STOP.set()
+        cancel.cancel()
         for proc in _running:
             proc.terminate()
 
@@ -196,7 +193,7 @@ def report(summary, msg):
     summary.append(msg)
 
 
-def convert_event(event_dir, segments, summary, failed_files):
+def convert_event(event_dir, segments, summary, failed_files, config):
     """Convert an event folder's .media segments into one MP4 for the whole event.
 
     Returns True or False for success, or None if no segment is in the cameras'
@@ -205,7 +202,7 @@ def convert_event(event_dir, segments, summary, failed_files):
     estimated frame duration at every join."""
     folder = event_dir.name   # <unix timestamp>_<duration in seconds>
     yyyy, mm, dd = event_dir.parts[-4:-1]
-    out_dir = OUTPUT_ROOT / yyyy / mm / dd
+    out_dir = config.output_dir / yyyy / mm / dd
     out_path = out_dir / f'{folder}.mp4'
     tmp_path = out_dir / f'{folder}.mp4.part'
     try:
@@ -219,7 +216,7 @@ def convert_event(event_dir, segments, summary, failed_files):
         out_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='crittervid-') as workdir:
             cmd = record_format_command(video, audio, tmp_path, Path(workdir), start=int(folder.split('_')[0]))
-            result = run_ffmpeg(cmd)
+            result = run_ffmpeg(cmd, config.cancel)
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
             report(summary, f"ERROR: Failed to convert {event_dir}: {result.stderr.decode('utf-8', errors='replace')}")
@@ -257,14 +254,14 @@ FALLBACK_OUTPUT = ['-video_track_timescale', '90000', '-f', 'mp4']
 
 
 # Convert one .media segment to .mp4, named after its event and offset
-def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False):
+def convert_media_file(media_path, summary, accel, failed_files, config):
     parts = media_path.parts
     tmp_path = None
     try:
         yyyy, mm, dd = parts[-5], parts[-4], parts[-3]
         folder = parts[-2]  # <start time>_<event length in seconds>
         timestamp, duration = folder.split('_')
-        out_dir = OUTPUT_ROOT / yyyy / mm / dd / folder
+        out_dir = config.output_dir / yyyy / mm / dd / folder
         out_dir.mkdir(parents=True, exist_ok=True)
         out_name = f"{timestamp}_{duration}_{media_path.stem}.mp4"
         out_path = out_dir / out_name
@@ -280,14 +277,14 @@ def convert_media_file(media_path, summary, accel, failed_files, copy_mode=False
         # A segment starts at the event's start plus its offset (its file name)
         offset = int(media_path.stem) if media_path.stem.isdigit() else 0
         output = media_format.creation_time_args(int(timestamp) + offset) + FALLBACK_OUTPUT
-        if copy_mode:
+        if config.copy:
             cmd = [get_ffmpeg_path(), '-y', '-i', media_arg(media_path), '-c:v', 'copy'] + output + [media_arg(tmp_path)]
             method = 'copy'
         else:
             input_opts, output_opts = ACCEL_OPTIONS[accel]
             cmd = [get_ffmpeg_path(), '-y'] + input_opts + ['-i', media_arg(media_path)] + output_opts + output + [media_arg(tmp_path)]
             method = accel
-        result = run_ffmpeg(cmd)
+        result = run_ffmpeg(cmd, config.cancel)
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
             error_msg = f"ERROR: Failed to convert {media_path}: {result.stderr.decode('utf-8', errors='replace')}"
@@ -341,7 +338,7 @@ def group_by_event(paths):
 
 
 def convert_event_parallel(args):
-    event_dir, segments, accel, copy_mode = args
+    event_dir, segments, accel, config = args
     # Use a local summary and failed list for thread safety
     local_summary = []
     local_failed = []
@@ -350,10 +347,10 @@ def convert_event_parallel(args):
                               f"1736453774_0021 (<start time>_<length in seconds>)")
         local_failed.append(str(event_dir))
         return local_summary, local_failed, False
-    success = convert_event(event_dir, segments, local_summary, local_failed)
+    success = convert_event(event_dir, segments, local_summary, local_failed, config)
     if success is None:
         # Not in the record format: convert the segments one by one
-        results = [convert_media_file(segment, local_summary, accel, local_failed, copy_mode)
+        results = [convert_media_file(segment, local_summary, accel, local_failed, config)
                    for segment in sorted(segments)]
         success = all(results)
     if success and not media_format.clock_was_set(int(event_dir.name.split('_')[0])):
@@ -371,27 +368,26 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='crittervid convert', description="Convert .media files to .mp4 with optional hardware acceleration.")
     parser.add_argument('--input-dir', type=str, default='input/DCIM', help='Input directory containing .media files (default: input/DCIM)')
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory for converted .mp4 files (default: output)')
-    parser.add_argument('--accel', choices=['cpu', 'cuda', 'qsv', 'vaapi', 'amf', 'auto'], default='auto', help='Hardware acceleration type (default: auto)')
+    parser.add_argument('--accel', choices=ACCEL_CHOICES, default='auto', help='Hardware acceleration type (default: auto)')
     parser.add_argument('--workers', type=int, default=4, help='Number of parallel conversions (default: 4)')
     parser.add_argument('--copy', action='store_true', help='Copy video stream without re-encoding (fast, requires compatible input)')
     parser.add_argument('--retry-failed', action='store_true', help='Retry only files that failed in previous run')
     parser.add_argument('--max-retries', type=int, default=3, help='Maximum number of retry attempts for failed files (default: 3)')
     args = parser.parse_args(argv)
-    STOP.clear()   # a stop from an earlier run in this process is over
     # On Windows, Ctrl+Break (how a program stops a console child) stops the run
     # like Ctrl+C
     if hasattr(signal, 'SIGBREAK'):
         signal.signal(signal.SIGBREAK, signal.default_int_handler)
+    return run(PipelineConfig(input_dir=args.input_dir, output_dir=args.output_dir, accel=args.accel,
+                              workers=args.workers, copy=args.copy, retry_failed=args.retry_failed,
+                              max_retries=args.max_retries))
 
-    # Update global paths based on arguments
-    global INPUT_ROOT, OUTPUT_ROOT, SUMMARY_REPORT, FAILED_FILES
-    INPUT_ROOT = Path(args.input_dir)
-    OUTPUT_ROOT = Path(args.output_dir)
-    SUMMARY_REPORT = OUTPUT_ROOT / 'conversion_summary.txt'
-    FAILED_FILES = OUTPUT_ROOT / 'conversion_failed.txt'
 
-    accel = args.accel
-    if args.copy:
+def run(config):
+    """Convert config.input_dir into config.output_dir; returns 0, or 1 if
+    anything failed or the run was stopped (config.cancel is then set)."""
+    accel = config.accel or 'auto'
+    if config.copy:
         print("Using stream copy mode (--copy): will not re-encode video.")
     else:
         if accel == 'auto':
@@ -404,29 +400,29 @@ def main(argv=None):
             accel = 'cpu'
 
     # Determine which files to process
-    if args.retry_failed and FAILED_FILES.exists():
-        print(f"Retrying failed files from {FAILED_FILES}...")
-        with open(FAILED_FILES, 'r', **PATH_TEXT) as f:
+    if config.retry_failed and config.failed_list.exists():
+        print(f"Retrying failed files from {config.failed_list}...")
+        with open(config.failed_list, 'r', **PATH_TEXT) as f:
             media_files = [Path(p) for p in list_entries(line.strip() for line in f if line.strip())]
         print(f"Found {len(media_files)} failed files to retry.")
     else:
-        media_files = list(find_media_files(INPUT_ROOT))
+        media_files = list(find_media_files(config.input_dir))
         print(f"Found {len(media_files)} .media files to process.")
 
     summary = []
     failed_files = []
     retry_count = 0
     interrupted = False
-    max_retries = args.max_retries if args.retry_failed else 1
+    max_retries = config.max_retries if config.retry_failed else 1
 
     while retry_count < max_retries:
         if retry_count > 0:
             print(f"\n=== Retry attempt {retry_count}/{max_retries - 1} for {len(media_files)} failed files ===")
         else:
-            print(f"Starting conversion with {args.workers} workers...")
+            print(f"Starting conversion with {config.workers} workers...")
 
         current_failed = []
-        executor = ThreadPoolExecutor(max_workers=args.workers)
+        executor = ThreadPoolExecutor(max_workers=config.workers)
         events, futures, collected = None, {}, set()
 
         def collect(future):
@@ -438,7 +434,7 @@ def main(argv=None):
         try:
             events = group_by_event(media_files)
             for event_dir, segments in events.items():
-                futures[executor.submit(convert_event_parallel, (event_dir, segments, accel, args.copy))] = event_dir
+                futures[executor.submit(convert_event_parallel, (event_dir, segments, accel, config))] = event_dir
             pending = set(futures)
             while pending:
                 # Wait in short steps: on Windows, Ctrl+C doesn't interrupt a wait
@@ -450,7 +446,7 @@ def main(argv=None):
             print("\nConversion interrupted by user (Ctrl+C). Stopping FFmpeg and writing partial summary...")
             # Queued events don't start, and the running ones stop and remove
             # their partial files; they're converted again on the next run
-            stop_ffmpeg()
+            stop_ffmpeg(config.cancel)
             executor.shutdown(wait=True, cancel_futures=True)
             # Keep the results of events that finished before the stop
             for future in futures:
@@ -458,7 +454,7 @@ def main(argv=None):
                     collect(future)
             summary.append("PROCESS INTERRUPTED: Conversion stopped by user.")
             interrupted = True
-            if args.retry_failed or retry_count:
+            if config.retry_failed or retry_count:
                 # Still to retry: this round's failures and the events it didn't
                 # finish, including any it hadn't started on
                 finished = {futures[future] for future in collected}
@@ -481,11 +477,11 @@ def main(argv=None):
         retry_count += 1
 
     # Write results
-    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    with open(SUMMARY_REPORT, 'w', **PATH_TEXT) as f:
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    with open(config.conversion_summary, 'w', **PATH_TEXT) as f:
         for line in summary:
             f.write(line + '\n')
-    print(f"Summary report written to {SUMMARY_REPORT}")
+    print(f"Summary report written to {config.conversion_summary}")
 
     # Write failed files list, with absolute paths so --retry-failed finds them
     # from any folder (lists from earlier versions are relative to where they ran)
@@ -494,26 +490,26 @@ def main(argv=None):
         # (it stopped before it could tell which of those are fine now) and adds
         # its own failures
         listed = failed_files
-        if not (args.retry_failed or retry_count) and FAILED_FILES.exists():
-            with open(FAILED_FILES, **PATH_TEXT) as f:
+        if not (config.retry_failed or retry_count) and config.failed_list.exists():
+            with open(config.failed_list, **PATH_TEXT) as f:
                 listed = [line.strip() for line in f if line.strip()] + failed_files
         listed = list_entries(listed)
         if listed:
-            with open(FAILED_FILES, 'w', **PATH_TEXT) as f:
+            with open(config.failed_list, 'w', **PATH_TEXT) as f:
                 f.writelines(entry + '\n' for entry in listed)
-            print(f"Failed files list written to {FAILED_FILES} ({len(listed)} files)")
-        elif args.retry_failed or retry_count:
-            FAILED_FILES.unlink(missing_ok=True)   # everything it was retrying is done
+            print(f"Failed files list written to {config.failed_list} ({len(listed)} files)")
+        elif config.retry_failed or retry_count:
+            config.failed_list.unlink(missing_ok=True)   # everything it was retrying is done
         print("Conversion stopped before it finished; run it again to convert the rest.")
     elif failed_files:
-        with open(FAILED_FILES, 'w', **PATH_TEXT) as f:
+        with open(config.failed_list, 'w', **PATH_TEXT) as f:
             f.writelines(entry + '\n' for entry in list_entries(failed_files))
-        print(f"Failed files list written to {FAILED_FILES} ({len(failed_files)} files)")
+        print(f"Failed files list written to {config.failed_list} ({len(failed_files)} files)")
         print("To retry failed files, run: python -m crittervid convert --retry-failed (with the same folders)")
     else:
         # Remove failed files list if all succeeded
-        if FAILED_FILES.exists():
-            FAILED_FILES.unlink()
+        if config.failed_list.exists():
+            config.failed_list.unlink()
         print("All conversions completed successfully!")
 
     return 1 if failed_files or interrupted else 0

@@ -41,7 +41,7 @@ The app only accepts connections from your own computer, and needs no internet c
    ```bash
    pip install -r requirements.txt
    ```
-   This installs Streamlit (the GUI) and GPUtil, plus WMI on Windows (both used by Auto GPU detection). The command-line scripts need no packages at all.
+   This installs the `crittervid` command (as an editable package, so changes in the folder take effect), Streamlit (the GUI) and GPUtil, plus WMI on Windows (both used by Auto GPU detection). The pipeline itself needs no other packages.
 
    To build the app or run the tests, install `requirements-dev.txt` instead. It adds PyInstaller and pytest:
    ```bash
@@ -51,12 +51,8 @@ The app only accepts connections from your own computer, and needs no internet c
 
 ### Starting the GUI
 
-- **Windows:** double-click `run_app.bat`, then open the address it prints, usually http://localhost:8501.
-- **Any platform:** from the project folder, run
-  ```bash
-  streamlit run app.py
-  ```
-  This opens your browser automatically. The first time, Streamlit asks for an email address in the terminal; press Enter to skip.
+- **Any platform:** run `crittervid gui` (or just `crittervid`), then open the address it prints, usually http://localhost:8501.
+- **Windows:** you can also double-click `run_app.bat`.
 
 To stop the GUI, press Ctrl+C in its terminal, or run `stop_app.bat` on Windows.
 
@@ -64,16 +60,24 @@ To stop the GUI, press Ctrl+C in its terminal, or run `stop_app.bat` on Windows.
 
 ```bash
 # Full pipeline: convert -> merge -> validate
-python process_all.py --input-dir input/DCIM --output-dir output --accel cuda
+crittervid run --input-dir input/DCIM --output-dir output --accel cuda
 
 # Individual steps
-python convert_media.py --input-dir input/DCIM --output-dir output --accel cuda
-python merge_videos.py --output-dir output --splits-per-day 2
-python validate_output.py --output-dir output            # add --deep to decode every file
+crittervid convert --input-dir input/DCIM --output-dir output --accel cuda
+crittervid merge --output-dir output --splits-per-day 2
+crittervid validate --output-dir output            # add --deep to decode every file
 
 # Retry only the files that failed in the previous run
-python convert_media.py --retry-failed --max-retries 5
+crittervid convert --retry-failed --max-retries 5
+
+# Preview without running FFmpeg
+crittervid run --dry-run
 ```
+
+`crittervid` is installed by `pip install -r requirements.txt`; `python -m crittervid` does the
+same. `crittervid --help` lists the commands, and `crittervid <command> --help` their options. The
+older script names (`python process_all.py`, `python convert_media.py`, …) still work for now,
+also from a folder where nothing is installed.
 
 ## Building the packaged app
 
