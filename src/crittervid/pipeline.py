@@ -4,14 +4,15 @@ import os
 import traceback
 
 from . import convert, merge, validate
+from .config import ACCEL_CHOICES, PipelineConfig
 
 
-def run_step(step, args):
+def run_step(step, config):
     """Run one step of the pipeline in this process and return its exit code.
-    A step that rejects its options or fails unexpectedly fails only itself, as
-    when the steps were separate programs; Ctrl+C stops the whole run."""
+    A step that rejects its settings or fails unexpectedly fails only itself,
+    as when the steps were separate programs; Ctrl+C stops the whole run."""
     try:
-        return step.main(args) or 0
+        return step.run(config) or 0
     except SystemExit as e:   # e.g. argparse rejected an option
         # As Python treats it at exit: None is success, a message is printed
         # and is a failure
@@ -37,7 +38,7 @@ def main(argv=None):
     parser.add_argument('--input-dir', type=str, default='input/DCIM', help='Input directory containing .media files (default: input/DCIM)')
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory for converted .mp4 files (default: output)')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be done without running FFmpeg or modifying files.')
-    parser.add_argument('--accel', choices=['cpu', 'cuda', 'qsv', 'vaapi', 'amf', 'auto'], default=None, help='Hardware acceleration type for conversion (default: auto)')
+    parser.add_argument('--accel', choices=ACCEL_CHOICES, default=None, help='Hardware acceleration type for conversion (default: auto)')
     parser.add_argument('--workers', type=int, default=None, help='Number of parallel conversions (default: 4)')
     parser.add_argument('--copy', action='store_true', help='Copy video stream without re-encoding (fast, requires compatible input)')
     parser.add_argument('--retry-failed', action='store_true', help='Retry only files that failed in previous conversion run')
@@ -51,87 +52,60 @@ def main(argv=None):
                              'events (1 to 1440; forwarded to merge_videos.py).')
     parser.set_defaults(validate=True)
     args = parser.parse_args(argv)
+    # Options left out take each step's default
+    config = PipelineConfig(input_dir=args.input_dir, output_dir=args.output_dir, accel=args.accel,
+                            workers=4 if args.workers is None else args.workers, copy=args.copy,
+                            retry_failed=args.retry_failed, max_retries=args.max_retries,
+                            splits_per_day=1 if args.splits_per_day is None else args.splits_per_day,
+                            force_merge=args.force_merge, deep_validate=args.deep_validate)
+    return run(config, validate_output=args.validate, dry_run=args.dry_run)
 
 
-    convert_args = []
-    if args.input_dir:
-        convert_args += ['--input-dir', args.input_dir]
-    if args.output_dir:
-        convert_args += ['--output-dir', args.output_dir]
-    if args.accel:
-        convert_args += ['--accel', args.accel]
-    if args.workers:
-        convert_args += ['--workers', str(args.workers)]
-    if args.copy:
-        convert_args += ['--copy']
-    if args.retry_failed:
-        convert_args += ['--retry-failed']
-    if args.max_retries:
-        convert_args += ['--max-retries', str(args.max_retries)]
+def run(config, validate_output=True, dry_run=False):
+    """Convert, merge and (unless told not to) validate, in this process, with
+    one cancel token for all three steps."""
+    def step(name, module):
+        if dry_run:
+            print(f"[DRY RUN] Would run: crittervid {name} {' '.join(config.command_args(name))}")
+            return 0
+        return run_step(module, config)
 
     print("=== Step 1: Convert .media to .mp4 ===")
-    if args.dry_run:
-        print(f"[DRY RUN] Would run: crittervid convert {' '.join(convert_args)}")
-        rc1 = 0
-    else:
-        rc1 = run_step(convert, convert_args)
-        if convert.STOP.is_set():   # the conversion was stopped with Ctrl+C
-            raise KeyboardInterrupt
+    rc1 = step('convert', convert)
+    if config.cancel.is_cancelled():   # the conversion was stopped with Ctrl+C
+        raise KeyboardInterrupt
 
     print("=== Step 2: Merge .mp4 files into longer clips ===")
-    merge_summary = os.path.join(args.output_dir, 'merged', 'merge_summary.txt')
-    merge_args = []
-    if args.output_dir:
-        merge_args += ['--output-dir', args.output_dir]
-    if args.splits_per_day is not None:   # the merge rejects values it can't use
-        merge_args += ['--splits-per-day', str(args.splits_per_day)]
-    if args.force_merge:
-        merge_args += ['--force']
-    if args.dry_run:
-        print(f"[DRY RUN] Would run: crittervid merge {' '.join(merge_args)}")
-        rc2 = 0
-    else:
+    merge_summary = config.merge_summary
+    if not dry_run:
         # Remove the previous run's report first, so it can't be mistaken for this
         # run's if the merge stops before writing one
         try:
             os.remove(merge_summary)
         except OSError:
             pass
-        rc2 = run_step(merge, merge_args)
+    rc2 = step('merge', merge)
 
-    if args.validate:
+    if validate_output:
         print("=== Step 3: Validate output and directory structure ===")
-        validate_args = []
-        if args.output_dir:
-            validate_args += ['--output-dir', args.output_dir]
-        if args.workers:
-            validate_args += ['--workers', str(args.workers)]
-        if args.deep_validate:
-            validate_args += ['--deep']
-        if args.accel:
-            validate_args += ['--accel', args.accel]
-        if args.dry_run:
-            print(f"[DRY RUN] Would run: crittervid validate {' '.join(validate_args)}")
-            rc3 = 0
-        else:
-            rc3 = run_step(validate, validate_args)
+        rc3 = step('validate', validate)
     else:
         print("=== Step 3: Validation skipped (use --validate to enable) ===")
         rc3 = 0
 
     print("=== Summary ===")
-    print(f"Conversion summary: {os.path.join(args.output_dir, 'conversion_summary.txt')}")
+    print(f"Conversion summary: {config.conversion_summary}")
     print(f"Merging summary: {merge_summary}")
     # Repeat the merge's warnings (e.g. older merged files it kept), which are
     # otherwise easy to miss among the step's output. The report is this run's:
     # an earlier one was removed before the step
-    if not args.dry_run and os.path.isfile(merge_summary):
+    if not dry_run and os.path.isfile(merge_summary):
         # Paths in it can be in any encoding (Linux)
         with open(merge_summary, encoding='utf-8', errors='replace') as f:
             for line in f:
                 if line.startswith('WARNING'):
                     print(f"Merge {line.rstrip()}")
-    if args.validate:
+    if validate_output:
         print("Validation: see console output above")
     else:
         print("Validation: skipped")

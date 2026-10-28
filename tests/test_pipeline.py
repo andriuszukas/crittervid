@@ -931,6 +931,7 @@ def test_old_script_names_still_run_their_step(ws, script, command):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert f'usage: crittervid {command}' in result.stdout
+    assert f"is now 'crittervid {command}'" in result.stderr   # with a note naming the new command
 
 
 def test_a_step_that_rejects_its_options_doesnt_stop_the_run(ws):
@@ -963,8 +964,85 @@ def test_a_step_that_exits_is_reported_as_python_would(code, expected, printed, 
     import types
     from crittervid import pipeline
 
-    def main(args):
+    def run(config):
         raise SystemExit(code)
 
-    assert pipeline.run_step(types.SimpleNamespace(main=main), []) == expected
+    assert pipeline.run_step(types.SimpleNamespace(run=run), None) == expected
     assert capsys.readouterr().err.strip() == printed
+
+
+# --- Settings for a run (#24) ---
+
+def test_a_config_names_the_files_of_a_run():
+    from crittervid.config import PipelineConfig
+
+    config = PipelineConfig(output_dir='out')
+
+    assert config.conversion_summary == Path('out', 'conversion_summary.txt')
+    assert config.failed_list == Path('out', 'conversion_failed.txt')
+    assert config.merge_summary == Path('out', 'merged', 'merge_summary.txt')
+    assert config.input_dir == Path('input', 'DCIM')
+
+
+@pytest.mark.parametrize('step', ['convert', 'merge', 'validate'])
+def test_a_steps_options_describe_its_part_of_the_config(step, monkeypatch):
+    # What a dry run shows must be what the step would do: its options give back
+    # the same settings
+    from crittervid import config as config_module, convert, merge, validate
+    from crittervid.config import PipelineConfig
+    config = PipelineConfig(input_dir='in', output_dir='out', accel='cpu', workers=3, copy=True,
+                            retry_failed=True, max_retries=5, splits_per_day=4, force_merge=True,
+                            deep_validate=True)
+    seen = []
+    module = {'convert': convert, 'merge': merge, 'validate': validate}[step]
+    monkeypatch.setattr(module, 'run', seen.append)
+
+    module.main(config.command_args(step))
+
+    fields = {'convert': ['input_dir', 'output_dir', 'accel', 'workers', 'copy', 'retry_failed', 'max_retries'],
+              'merge': ['output_dir', 'splits_per_day', 'force_merge'],
+              'validate': ['output_dir', 'workers', 'deep_validate', 'accel']}[step]
+    assert {f: getattr(seen[0], f) for f in fields} == {f: getattr(config, f) for f in fields}
+
+
+def test_every_step_of_a_run_shares_one_config_and_cancel_token(monkeypatch, tmp_path):
+    from crittervid import convert, merge, pipeline, validate
+    from crittervid.config import PipelineConfig
+    seen = []
+    for module in (convert, merge, validate):
+        monkeypatch.setattr(module, 'run', lambda config, name=module.__name__: seen.append((name, config)) or 0)
+    config = PipelineConfig(output_dir=tmp_path)
+
+    assert pipeline.run(config) == 0
+
+    assert [name for name, _ in seen] == ['crittervid.convert', 'crittervid.merge', 'crittervid.validate']
+    assert all(c is config for _, c in seen)
+
+
+@pytest.mark.parametrize('cancelled', [False, True])
+def test_a_cancelled_run_merges_nothing(ws, fake_ffmpeg_dir, monkeypatch, cancelled):
+    from crittervid import merge
+    from crittervid.config import PipelineConfig
+    suffix = '.bat' if os.name == 'nt' else ''
+    monkeypatch.setattr(merge, 'get_ffmpeg_path', lambda: str(fake_ffmpeg_dir / f'ffmpeg{suffix}'))
+    monkeypatch.setattr(merge, 'get_ffprobe_path', lambda: str(fake_ffmpeg_dir / f'ffprobe{suffix}'))
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    config = PipelineConfig(output_dir=ws.root / 'output')
+    if cancelled:
+        config.cancel.cancel()
+
+    assert merge.run(config) == (1 if cancelled else 0)
+    assert len(ws.files('merged_*.mp4')) == (0 if cancelled else 1)
+
+
+@pytest.mark.parametrize('option', ['--workers', '--max-retries'])
+def test_a_run_rejects_counts_below_one_without_a_traceback(ws, option):
+    ws.add_media('0001.media', b'good')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', option, '0')
+
+    assert result.returncode == 1
+    assert 'must be at least 1' in result.stderr
+    assert 'Traceback' not in result.stdout + result.stderr
+    assert not ws.converted('0001.media').exists()

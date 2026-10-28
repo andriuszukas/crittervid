@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# Tests that import the package directly use the checkout's copy, installed or not
+sys.path.insert(0, str(REPO_ROOT / 'src'))
 TESTS_DIR = Path(__file__).resolve().parent
 SCRIPTS = ['ffmpeg_helper.py', 'media_format.py', 'convert_media.py', 'merge_videos.py', 'validate_output.py', 'process_all.py',
            'app.py']
