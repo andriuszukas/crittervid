@@ -122,8 +122,11 @@ In the GUI, choose under **Hardware Acceleration**; on the command line, use `--
 - for the packaged app, copy `ffmpeg.exe` and `ffprobe.exe` into `CritterVid\_internal\`, or
 - when running from source, put it in the project folder.
 
+### Finding out what went wrong
+Each run's first line names its run log (`Run <id> started; log: <path>`); the GUI shows the run ID and the log's path when the run ends. The run log has the details the console leaves out, such as FFmpeg's full error output and tracebacks. The app log, `%LOCALAPPDATA%\CritterVid\Logs\crittervid.log` on Windows, also has runs that stopped before writing any output. See the README's "Logs" section.
+
 ### The packaged app reports "Pipeline failed with exit code 9009", or says Python can't be found
-Python isn't on `PATH`. Reinstall Python with **Add python.exe to PATH** ticked, then open a new Command Prompt and check `python --version`.
+Versions before 0.1.0 needed Python on `PATH` to run the pipeline from the packaged app. Use a current build, which runs it itself.
 
 ### "Module not found" errors
 - When running from source, install the packages as described in [Running from source](#running-from-source).

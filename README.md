@@ -123,6 +123,29 @@ aren't merged into days; the reports warn about them.
 > output folder. If you reuse an old one, the old per-segment files are left in place but are no
 > longer included in merges.
 
+## Logs
+
+Every run gets an ID, shown in its first line of output: `Run 3f9a2c1e started; log: <path>`.
+The GUI shows it again when the run ends. Quote it when reporting a problem.
+
+- **Run log:** `<output>/logs/<start time>_<run ID>.jsonl`, written by `run`, `convert` and
+  `merge`, but not by a dry run or by `validate` on its own. It has one JSON object per line, with
+  these fields:
+  - always: `schema`, `time` (UTC), `run`, `level`, `step`, `message` and `elapsed_s`;
+  - for each file: `file`, plus `duration_s` once the file is done;
+  - when something fails: `ffmpeg_stderr` (FFmpeg's last 20 lines of error output) or `traceback`;
+  - on the first line: `command` and `settings`.
+- **App log:** `crittervid.log` in `%LOCALAPPDATA%\CritterVid\Logs` (Windows),
+  `~/Library/Logs/CritterVid` (macOS) or `~/.local/state/crittervid` (Linux). It covers every run,
+  including problems before an output folder exists. It's moved aside when it passes 1 MB, and the
+  last five old ones are kept.
+- **Console:** the same messages as the run log. FFmpeg failures show only the line that says why,
+  and errors that come with a traceback show one line; the full details are in the run log.
+  `--verbose` also shows details such as each FFmpeg command line.
+
+The logs contain file paths and stay on your computer: CritterVid never sends them anywhere.
+See [decision record 0003](docs/decisions/0003-logging.md) for the details.
+
 ## Running tests
 
 ```bash
