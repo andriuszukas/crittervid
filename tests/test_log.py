@@ -259,3 +259,17 @@ def test_what_start_run_prints_reads_back(logs):
     first = console_text(capsys).splitlines()[0]
 
     assert log.read_first_line(first) == (run.id, str(run.run_log))
+
+
+
+def test_the_run_line_stays_first_when_the_app_log_folder_cant_be_used(logs, monkeypatch):
+    tmp_path, capsys = logs
+    blocked = tmp_path / 'blocked'
+    blocked.write_text('a file where the log folder should be')
+    monkeypatch.setenv('CRITTERVID_LOG_DIR', str(blocked))
+
+    run = log.start_run(PipelineConfig(output_dir=tmp_path / 'out'))
+
+    first, second = console_text(capsys).splitlines()[:2]
+    assert log.read_first_line(first) == (run.id, str(run.run_log))
+    assert second.startswith("WARNING: can't use the app log folder")

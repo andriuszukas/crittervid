@@ -191,7 +191,7 @@ if st.button("Run"):
     for line in process.stdout:
         output_text += line
         line_count += 1
-        if run is None and line_count == 1:
+        if run is None and line_count <= 5:   # it's the first line; a few, to be safe
             run = read_first_line(line)
 
         # Update UI every 5 lines or on important messages

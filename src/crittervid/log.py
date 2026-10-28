@@ -300,6 +300,8 @@ def start_run(config=None, command='run', verbose=False, run_log=True):
         handler.addFilter(_for_console)
         _handlers.append(handler)
 
+    # Said after the first line, which must stay first (the GUI reads it)
+    later = []
     try:
         folder = app_log_dir()
         folder.mkdir(parents=True, exist_ok=True)
@@ -307,8 +309,7 @@ def start_run(config=None, command='run', verbose=False, run_log=True):
         _move_aside(_run.app_log)
         _handlers.append(_LogFile(_run.app_log, console))
     except OSError as e:
-        if console is not None:
-            console.write(f"WARNING: can't use the app log folder ({e}); carrying on without it\n")
+        later.append(f"WARNING: can't use the app log folder ({e}); carrying on without it")
 
     if run_log and config is not None:
         # Absolute, so whoever reads the first line finds it wherever they run
@@ -325,6 +326,8 @@ def start_run(config=None, command='run', verbose=False, run_log=True):
     shown = _run.run_log or _run.app_log
     logger.info(f'Run {_run.id} started; log: {shown}' if shown else f'Run {_run.id} started (no log file)',
                 extra={'command': command, 'settings': _settings(config) if config is not None else None})
+    for message in later:
+        logger.warning(message)
     return _run
 
 
