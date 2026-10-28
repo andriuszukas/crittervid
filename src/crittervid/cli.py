@@ -9,10 +9,11 @@
 Each command has its own options; `crittervid <command> --help` lists them.
 """
 import importlib
+import logging
 import signal
 import sys
 
-from . import __version__
+from . import __version__, log
 
 # Command name -> module whose main(argv) runs it
 COMMANDS = {
@@ -50,5 +51,10 @@ def main(argv=None):
     try:
         return module.main(args)
     except KeyboardInterrupt:
-        print('=== Stopped by user (Ctrl+C) ===')
+        if log.current() is None:   # stopped before a run started (e.g. the GUI's server)
+            print('=== Stopped by user (Ctrl+C) ===')
+        else:
+            log.say(log.get(command), '=== Stopped by user (Ctrl+C) ===', level=logging.WARNING)
         return 1
+    finally:
+        log.stop_run()   # write out what's left, also after Ctrl+C

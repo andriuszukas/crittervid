@@ -98,6 +98,8 @@ def make_workspace(tmp_path, path_prefix=None):
     env['PYTHONPATH'] = os.pathsep.join([str(app / 'src')] + [p for p in env.get('PYTHONPATH', '').split(os.pathsep) if p])
     for var in ('CRITTERVID_FFMPEG', 'CRITTERVID_FFPROBE'):
         env.pop(var, None)
+    # The app log goes to the test's folder, not the user's
+    env['CRITTERVID_LOG_DIR'] = str(tmp_path / 'app-logs')
     if path_prefix:
         env['PATH'] = str(path_prefix) + os.pathsep + env['PATH']
     return Workspace(app, env)
@@ -124,6 +126,16 @@ def fake_ffmpeg_dir(tmp_path):
 def ws(tmp_path, fake_ffmpeg_dir):
     """Workspace that uses the fake ffmpeg."""
     return make_workspace(tmp_path, fake_ffmpeg_dir)
+
+
+@pytest.fixture(autouse=True)
+def own_app_log(tmp_path, monkeypatch):
+    """Tests that run CritterVid in this process log to their own folder, never
+    the user's app log, and leave logging switched off afterwards."""
+    monkeypatch.setenv('CRITTERVID_LOG_DIR', str(tmp_path / 'app-logs'))
+    yield
+    from crittervid import log
+    log.stop_run()
 
 
 def require(available, what):

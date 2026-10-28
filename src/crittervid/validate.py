@@ -13,6 +13,7 @@ the footage itself and only shows whether FFmpeg can get through each file.
 """
 import argparse
 import json
+import logging
 import os
 import re
 import subprocess
@@ -21,7 +22,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import names
+from . import log, names
 from .config import ACCEL_CHOICES, PipelineConfig
 from .ffmpeg import get_ffmpeg_path, get_ffprobe_path, media_arg
 
@@ -52,6 +53,13 @@ class Probe:
     def end(self, kind='video'):
         start, length = self.streams[kind]
         return None if length is None else max(start, 0) + length
+
+
+_log = log.get('validate')
+
+
+def say(message, level=None, **extra):
+    log.say(_log, message, level, **extra)
 
 
 def _probe_once(path):
@@ -235,12 +243,7 @@ def check_merged_days(converted, merged, probes, config):
 
 
 def main(argv=None):
-    # Paths can contain characters the console's code page can't encode (e.g. the
-    # Windows default when output is piped to the GUI), so always write UTF-8.
-    # The streams are None when there's no console at all (pythonw).
-    for stream in (sys.stdout, sys.stderr):
-        if stream is not None:
-            stream.reconfigure(encoding='utf-8', errors='replace')
+    log.setup_streams()   # UTF-8 on the console, also for option errors
     parser = argparse.ArgumentParser(prog='crittervid validate', description='Check the converted and merged videos.')
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory to check (default: output)')
     parser.add_argument('--workers', type=int, default=4, help='Number of parallel checks (default: 4)')
@@ -248,33 +251,38 @@ def main(argv=None):
                         help='Also decode every file in full, to check FFmpeg can get through each one (slow: about as long as the footage)')
     parser.add_argument('--accel', choices=ACCEL_CHOICES, default=None,
                         help='Hardware decoding for --deep (default: none); files that fail are retried on the CPU')
+    parser.add_argument('--verbose', action='store_true', help='Also show details on the console (they are always in the logs).')
     args = parser.parse_args(argv)
 
-    return run(PipelineConfig(output_dir=args.output_dir, workers=args.workers, deep_validate=args.deep,
-                              accel=args.accel))
+    config = PipelineConfig(output_dir=args.output_dir, workers=args.workers, deep_validate=args.deep,
+                            accel=args.accel)
+    log.start_run(config, 'validate', verbose=args.verbose, run_log=False)   # it only reads the output folder
+    return run(config)
 
 
 def run(config):
     """Check the videos in config.output_dir; returns 0, 1 if a check found an
     error, or 2 for settings it can't use."""
     if config.workers < 1:
-        print('crittervid validate: error: --workers must be at least 1', file=sys.stderr)
+        message = 'crittervid validate: error: --workers must be at least 1'
+        print(message, file=sys.stderr)
+        log.file_only(_log, logging.ERROR, message)
         return 2
     if not config.output_dir.is_dir():
-        print(f'ERROR: output folder not found: {config.output_dir}')
+        say(f'ERROR: output folder not found: {config.output_dir}')
         return 1
 
     converted, merged = output_files(config)
     if not converted and not merged:
-        print(f'No output videos in {config.output_dir} to check.')
+        say(f'No output videos in {config.output_dir} to check.')
         return 0
     deep = config.deep_validate
     if not get_ffprobe_path():
-        print('ffprobe not found (it comes with FFmpeg): only checking that every file decodes. '
-              'Install ffprobe for the full checks of audio, lengths and merged days.')
+        say('ffprobe not found (it comes with FFmpeg): only checking that every file decodes. '
+            'Install ffprobe for the full checks of audio, lengths and merged days.', level=logging.WARNING)
         deep = True
-    print(f'Checking {len(converted)} converted and {len(merged)} merged videos'
-          f'{" (decoding each in full)" if deep else ""}...')
+    say(f'Checking {len(converted)} converted and {len(merged)} merged videos'
+        f'{" (decoding each in full)" if deep else ""}...')
 
     problems = check_names(converted, merged)
     try:
@@ -288,7 +296,7 @@ def run(config):
             if merged:
                 problems += check_merged_days(converted, merged, probes, config)
             elif converted:
-                print('No merged files yet, so merged days are not checked.')
+                say('No merged files yet, so merged days are not checked.')
         if deep:
             from .convert import ACCEL_OPTIONS, detect_accel
             accel = detect_accel() if config.accel == 'auto' else config.accel
@@ -297,19 +305,19 @@ def run(config):
                 results = list(executor.map(lambda p: decodes(p, input_opts), converted + merged))
             problems += [f'ERROR: {p}: does not decode' for p, ok in zip(converted + merged, results) if not ok]
     except KeyboardInterrupt:
-        print('\nValidation interrupted by user (Ctrl+C). Partial results shown below.')
+        say('\nValidation interrupted by user (Ctrl+C). Partial results shown below.', level=logging.WARNING)
         problems.append('ERROR: validation stopped by user before it finished')
 
     for line in problems:
-        print(line)
+        say(line)
     errors = sum(1 for line in problems if line.startswith('ERROR'))
     if errors:
-        print(f'\nValidation found {errors} problem{"s" if errors != 1 else ""}.')
+        say(f'\nValidation found {errors} problem{"s" if errors != 1 else ""}.', level=logging.ERROR)
         if any(line.startswith('ERROR') and 'merged' in line for line in problems):
-            print('Merged files are skipped while their events stay the same; to make them again, merge with '
-                  '--force (process_all.py --force-merge, or "Merge everything again" in the app).')
+            say('Merged files are skipped while their events stay the same; to make them again, merge with '
+                '--force (process_all.py --force-merge, or "Merge everything again" in the app).')
         return 1
-    print('All output videos passed the checks.')
+    say('All output videos passed the checks.')
     return 0
 
 

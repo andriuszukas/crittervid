@@ -1,10 +1,17 @@
 import sys
 import argparse
+import logging
 import os
-import traceback
 
-from . import convert, merge, validate
+from . import convert, log, merge, validate
 from .config import ACCEL_CHOICES, PipelineConfig
+
+
+_log = log.get('run')
+
+
+def say(message, level=None, **extra):
+    log.say(_log, message, level, **extra)
 
 
 def run_step(step, config):
@@ -19,21 +26,17 @@ def run_step(step, config):
         if e.code is None or isinstance(e.code, int):
             return e.code or 0
         print(e.code, file=sys.stderr)
+        log.file_only(_log, logging.ERROR, str(e.code))
         return 1
-    except Exception:
-        traceback.print_exc()
+    except Exception as e:
+        # The traceback goes to the logs; the console gets one line
+        _log.error(f'ERROR: {step.__name__.rsplit(".", 1)[-1]} failed unexpectedly: {e!r} (details in the log)',
+                   exc_info=True)
         return 1
 
 
 def main(argv=None):
-    # Flush each line so step headers stay in order with the child scripts' output
-    # when stdout is a pipe (e.g. the GUI or `| tee`). Write UTF-8 like the child
-    # scripts, since paths can contain characters the console's code page lacks
-    # The streams are None when there's no console at all (pythonw).
-    if sys.stdout is not None:
-        sys.stdout.reconfigure(line_buffering=True, encoding='utf-8', errors='replace')
-    if sys.stderr is not None:
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    log.setup_streams()   # UTF-8 on the console, also for option errors
     parser = argparse.ArgumentParser(prog='crittervid run', description="Convert, merge and validate camera-trap videos.")
     parser.add_argument('--input-dir', type=str, default='input/DCIM', help='Input directory containing .media files (default: input/DCIM)')
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory for converted .mp4 files (default: output)')
@@ -51,6 +54,7 @@ def main(argv=None):
     parser.add_argument('--splits-per-day', type=int, default=None, help='Number of equal time windows to divide each day into, one merged file per window with '
                              'events (1 to 1440; forwarded to merge_videos.py).')
     parser.set_defaults(validate=True)
+    parser.add_argument('--verbose', action='store_true', help='Also show details on the console (they are always in the logs).')
     args = parser.parse_args(argv)
     # Options left out take each step's default
     config = PipelineConfig(input_dir=args.input_dir, output_dir=args.output_dir, accel=args.accel,
@@ -58,6 +62,7 @@ def main(argv=None):
                             retry_failed=args.retry_failed, max_retries=args.max_retries,
                             splits_per_day=1 if args.splits_per_day is None else args.splits_per_day,
                             force_merge=args.force_merge, deep_validate=args.deep_validate)
+    log.start_run(config, 'run', verbose=args.verbose, run_log=not args.dry_run)
     return run(config, validate_output=args.validate, dry_run=args.dry_run)
 
 
@@ -66,16 +71,16 @@ def run(config, validate_output=True, dry_run=False):
     one cancel token for all three steps."""
     def step(name, module):
         if dry_run:
-            print(f"[DRY RUN] Would run: crittervid {name} {' '.join(config.command_args(name))}")
+            say(f"[DRY RUN] Would run: crittervid {name} {' '.join(config.command_args(name))}")
             return 0
         return run_step(module, config)
 
-    print("=== Step 1: Convert .media to .mp4 ===")
+    say("=== Step 1: Convert .media to .mp4 ===")
     rc1 = step('convert', convert)
     if config.cancel.is_cancelled():   # the conversion was stopped with Ctrl+C
         raise KeyboardInterrupt
 
-    print("=== Step 2: Merge .mp4 files into longer clips ===")
+    say("=== Step 2: Merge .mp4 files into longer clips ===")
     merge_summary = config.merge_summary
     if not dry_run:
         # Remove the previous run's report first, so it can't be mistaken for this
@@ -87,15 +92,15 @@ def run(config, validate_output=True, dry_run=False):
     rc2 = step('merge', merge)
 
     if validate_output:
-        print("=== Step 3: Validate output and directory structure ===")
+        say("=== Step 3: Validate output and directory structure ===")
         rc3 = step('validate', validate)
     else:
-        print("=== Step 3: Validation skipped (use --validate to enable) ===")
+        say("=== Step 3: Validation skipped (use --validate to enable) ===")
         rc3 = 0
 
-    print("=== Summary ===")
-    print(f"Conversion summary: {config.conversion_summary}")
-    print(f"Merging summary: {merge_summary}")
+    say("=== Summary ===")
+    say(f"Conversion summary: {config.conversion_summary}")
+    say(f"Merging summary: {merge_summary}")
     # Repeat the merge's warnings (e.g. older merged files it kept), which are
     # otherwise easy to miss among the step's output. The report is this run's:
     # an earlier one was removed before the step
@@ -104,15 +109,15 @@ def run(config, validate_output=True, dry_run=False):
         with open(merge_summary, encoding='utf-8', errors='replace') as f:
             for line in f:
                 if line.startswith('WARNING'):
-                    print(f"Merge {line.rstrip()}")
+                    say(f"Merge {line.rstrip()}")
     if validate_output:
-        print("Validation: see console output above")
+        say("Validation: see console output above")
     else:
-        print("Validation: skipped")
+        say("Validation: skipped")
     if rc1 == 0 and rc2 == 0 and rc3 == 0:
-        print("All steps completed successfully.")
+        say("All steps completed successfully.")
         return 0
-    print("Some steps failed. Check logs above and summary reports.")
+    say("Some steps failed. Check logs above and summary reports.", level=logging.ERROR)
     return 1
 
 if __name__ == '__main__':

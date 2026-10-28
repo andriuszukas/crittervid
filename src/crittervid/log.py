@@ -40,6 +40,41 @@ def get(step):
     return logging.getLogger(f'{LOGGER}.{step}')
 
 
+def level_of(message):
+    """The level a message's own wording gives it: the steps' messages start
+    with ERROR or WARNING when they are one ("Failed to ..." is an error too)."""
+    text = message.lstrip()
+    if text.startswith(('ERROR', 'Failed to ')):
+        return logging.ERROR
+    if text.startswith('WARNING'):
+        return logging.WARNING
+    return logging.INFO
+
+
+def say(logger, message, level=None, **extra):
+    """Log a message at `level`, or the level its wording gives it (see
+    level_of); the console shows it exactly as written."""
+    logger.log(level_of(message) if level is None else level, message, extra=extra or None)
+
+
+def file_only(logger, level, message, **extra):
+    """Log a message to the log files but not the console, for lines the
+    console already shows another way (e.g. option errors on stderr)."""
+    logger.log(level, message, extra={**extra, 'console': False})
+
+
+class _ConsoleFormatter(logging.Formatter):
+    """The message alone, as the steps printed it: no traceback, which goes to
+    the log files instead."""
+
+    def format(self, record):
+        return record.getMessage()
+
+
+def _for_console(record):
+    return getattr(record, 'console', True)
+
+
 @dataclasses.dataclass
 class Run:
     id: str
@@ -221,7 +256,8 @@ def start_run(config=None, command='run', verbose=False, run_log=True):
     if console is not None:
         handler = logging.StreamHandler(console)
         handler.setLevel(logging.DEBUG if verbose else logging.INFO)
-        handler.setFormatter(logging.Formatter('%(message)s'))
+        handler.setFormatter(_ConsoleFormatter())
+        handler.addFilter(_for_console)
         _handlers.append(handler)
 
     try:

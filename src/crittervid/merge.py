@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 from pathlib import Path
@@ -7,7 +8,7 @@ from datetime import datetime, timedelta
 import re
 import argparse
 import sys
-from . import media_format
+from . import log, media_format
 from .config import PipelineConfig
 from .ffmpeg import PATH_TEXT, get_ffmpeg_path, get_ffprobe_path, media_arg
 from .names import (FILENAME_RE, MERGED_NAME, MINUTES_PER_DAY, UNSET_CLOCK_MERGES, file_start,  # noqa: F401
@@ -17,6 +18,13 @@ from .names import (FILENAME_RE, MERGED_NAME, MINUTES_PER_DAY, UNSET_CLOCK_MERGE
 # Each day's merged folder keeps a record of the converted files each merged file
 # was made from, so older merged files are only deleted when nothing is lost
 CONTENTS_NAME = 'merged_contents.json'
+
+_log = log.get('merge')
+
+
+def say(message, level=None, **extra):
+    log.say(_log, message, level, **extra)
+
 
 def find_mp4_files(root):
     for dirpath, _, filenames in os.walk(root):
@@ -63,7 +71,7 @@ def merge_group(start, end, files, summary, record, k, n, config):
     sources = [source_name(f, config) for _, f in files]
     if not config.force_merge and up_to_date(out_path, sources, files, record):
         msg = f"SKIPPED: {out_path} is up to date ({len(files)} files)"
-        print(msg)
+        say(msg)
         summary.append(msg)
         return out_path
     # Write to a temp file and rename on success, so a failed merge never leaves
@@ -76,7 +84,7 @@ def merge_group(start, end, files, summary, record, k, n, config):
     if broken:
         error_msg = (f"Failed to merge {out_name}: {broken[0]} has a line break in its path, "
                      f"which FFmpeg's list of files to join can't hold; rename it")
-        print(error_msg)
+        say(error_msg)
         summary.append(f"ERROR: {error_msg}")
         return False
     # FFmpeg reads the list as UTF-8 (other bytes as they are), and a quote inside
@@ -103,7 +111,7 @@ def merge_group(start, end, files, summary, record, k, n, config):
     if result.returncode != 0:
         tmp_path.unlink(missing_ok=True)
         error_msg = f"Failed to merge {out_name}: {result.stderr.decode('utf-8', errors='replace')}"
-        print(error_msg)
+        say(error_msg)
         summary.append(f"ERROR: {error_msg}")
         return False
     # Record what the new file holds before it replaces the old one, together
@@ -116,7 +124,7 @@ def merge_group(start, end, files, summary, record, k, n, config):
     def fail(reason):
         tmp_path.unlink(missing_ok=True)
         error_msg = f"Failed to merge {out_name}: {reason}"
-        print(error_msg)
+        say(error_msg)
         summary.append(f"ERROR: {error_msg}")
         return False
 
@@ -139,7 +147,7 @@ def merge_group(start, end, files, summary, record, k, n, config):
         return fail(f"couldn't replace the earlier file: {e}")
     record[out_name] = sources   # written with the day's other changes
     success_msg = f"Merged {len(files)} files -> {out_path}"
-    print(success_msg)
+    say(success_msg)
     summary.append(f"SUCCESS: {success_msg}")
     return out_path
 
@@ -177,7 +185,7 @@ def write_contents(day_dir, record, summary):
     except OSError as e:
         tmp.unlink(missing_ok=True)
         msg = f"couldn't write {path}: {e}"
-        print(f"WARNING: {msg}")
+        say(f"WARNING: {msg}")
         summary.append(f"WARNING: {msg}")
         return False
 
@@ -194,7 +202,7 @@ def remove_stale_merges(day_dir, written, summary, day_files, record, config):
     file that can't be deleted (e.g. open in a video player) is left too.
     Updates the record to match what's left."""
     def warn(msg):
-        print(f"WARNING: {msg}")
+        say(f"WARNING: {msg}")
         summary.append(f"WARNING: {msg}")
 
     sets = {}
@@ -222,19 +230,14 @@ def remove_stale_merges(day_dir, written, summary, day_files, record, config):
                 warn(f"couldn't remove {old} (left from an earlier split setting): {e}")
                 continue
             msg = f"Removed {old} (left from an earlier split setting)"
-            print(msg)
+            say(msg)
             summary.append(f"REMOVED: {msg}")
     # Forget files that are no longer there (e.g. deleted by hand)
     for name in [name for name in record if not (day_dir / name).is_file()]:
         del record[name]
 
 def main(argv=None):
-    # Paths can contain characters the console's code page can't encode (e.g. the
-    # Windows default when output is piped to the GUI), so always write UTF-8.
-    # The streams are None when there's no console at all (pythonw).
-    for stream in (sys.stdout, sys.stderr):
-        if stream is not None:
-            stream.reconfigure(encoding='utf-8', errors='replace')
+    log.setup_streams()   # UTF-8 on the console, also for option errors
     parser = argparse.ArgumentParser(prog='crittervid merge', description="Merge converted .mp4 files into one or more clips per day.")
     parser.add_argument('--output-dir', type=str, default='output', help='Output directory containing .mp4 files to merge (default: output)')
     parser.add_argument('--splits-per-day', type=int, default=1, help='Number of equal time windows to divide each day into, one merged .mp4 file per window '
@@ -242,18 +245,22 @@ def main(argv=None):
     parser.add_argument('--force', action='store_true', help='Merge every part again, including ones that are '
                         'already up to date (by default they are skipped), e.g. after upgrading to a '
                         'version that merges differently.')
+    parser.add_argument('--verbose', action='store_true', help='Also show details on the console (they are always in the logs).')
     args = parser.parse_args(argv)
 
     # Update global paths based on arguments
-    return run(PipelineConfig(output_dir=args.output_dir, splits_per_day=args.splits_per_day, force_merge=args.force))
+    config = PipelineConfig(output_dir=args.output_dir, splits_per_day=args.splits_per_day, force_merge=args.force)
+    log.start_run(config, 'merge', verbose=args.verbose)
+    return run(config)
 
 
 def run(config):
     """Merge the converted files in config.output_dir into days (or parts of
     days); returns 0, 1 if a part failed, or 2 for a split it can't use."""
     if not 1 <= config.splits_per_day <= MINUTES_PER_DAY:
-        print(f'crittervid merge: error: --splits-per-day must be 1 to {MINUTES_PER_DAY} (windows are whole minutes)',
-              file=sys.stderr)
+        message = f'crittervid merge: error: --splits-per-day must be 1 to {MINUTES_PER_DAY} (windows are whole minutes)'
+        print(message, file=sys.stderr)
+        log.file_only(_log, logging.ERROR, message)
         return 2
 
     mp4_files = list(find_mp4_files(config.output_dir))
@@ -261,7 +268,7 @@ def run(config):
     summary = []
     failed = 0
     def warn(msg):
-        print(f"WARNING: {msg}")
+        say(f"WARNING: {msg}")
         summary.append(f"WARNING: {msg}")
 
     # Files the converter didn't write (e.g. copied in by hand) aren't merged; say so
@@ -307,7 +314,7 @@ def run(config):
     with open(config.merge_summary, 'w', **PATH_TEXT) as f:
         for line in summary:
             f.write(line + '\n')
-    print(f"Summary report written to {config.merge_summary}")
+    say(f"Summary report written to {config.merge_summary}")
 
     return 1 if failed else 0
 
