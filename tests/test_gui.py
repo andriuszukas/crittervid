@@ -51,6 +51,8 @@ def test_gui_reports_success(gui, ws):
 
     assert not at.exception
     assert [s.value for s in at.success] == ['✅ Pipeline completed successfully!']
+    [caption] = [c.value for c in at.caption if c.value.startswith('Run ')]
+    assert ' · log: ' in caption and caption.split(' · log: ')[1].split(' (')[0].endswith('.jsonl')
     assert ws.converted('0001.media').read_bytes() == b'OKgood'
 
 

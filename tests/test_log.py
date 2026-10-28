@@ -240,3 +240,22 @@ def test_deeper_logger_names_belong_to_their_step(logs):
     log.stop_run()
 
     assert records(run.run_log)[-1]['step'] == 'convert'
+
+
+
+@pytest.mark.parametrize('line, expected', [
+    ('Run 3f9a2c1e started; log: C:\\out\\logs\\x.jsonl\n', ('3f9a2c1e', 'C:\\out\\logs\\x.jsonl')),
+    ('Run 3f9a2c1e started (no log file)', ('3f9a2c1e', None)),
+    ('=== Step 1: Convert .media to .mp4 ===', None),
+])
+def test_the_first_line_can_be_read_back(line, expected):
+    assert log.read_first_line(line) == expected
+
+
+def test_what_start_run_prints_reads_back(logs):
+    tmp_path, capsys = logs
+    run = log.start_run(PipelineConfig(output_dir=tmp_path / 'out'))
+
+    first = console_text(capsys).splitlines()[0]
+
+    assert log.read_first_line(first) == (run.id, str(run.run_log))

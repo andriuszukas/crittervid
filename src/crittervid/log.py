@@ -328,6 +328,17 @@ def start_run(config=None, command='run', verbose=False, run_log=True):
     return _run
 
 
+_FIRST_LINE = re.compile(r'Run ([0-9a-f]{8}) started(?:; log: (.+)| \(no log file\))$')
+
+
+def read_first_line(line):
+    """The run ID and log path (or None) from the first line start_run prints,
+    or None if the line isn't one; for programs that start a run and read its
+    output, such as the GUI."""
+    m = _FIRST_LINE.match(line.strip())
+    return (m.group(1), m.group(2)) if m else None
+
+
 def stop_run():
     """Close the outputs start_run added, writing out what's buffered."""
     global _run

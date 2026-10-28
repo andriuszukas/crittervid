@@ -4,6 +4,9 @@ import os
 import sys
 from tkinter import Tk, filedialog
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from crittervid.log import read_first_line  # noqa: E402
+
 # The folder holding the crittervid package (src/ in a checkout), so the pipeline
 # started below finds this copy of it even when it isn't installed
 PACKAGE_PARENT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -164,6 +167,7 @@ if st.button("Run"):
     output_placeholder = st.empty()
     output_text = ""
     line_count = 0
+    run = None   # (run ID, log path) from the pipeline's first line
 
     # Run process with live output streaming. These settings are inherited by every
     # pipeline stage: PYTHONUNBUFFERED so output arrives promptly and in order, and
@@ -187,6 +191,8 @@ if st.button("Run"):
     for line in process.stdout:
         output_text += line
         line_count += 1
+        if run is None and line_count == 1:
+            run = read_first_line(line)
 
         # Update UI every 5 lines or on important messages
         if line_count % 5 == 0 or "===" in line or "ERROR" in line or "completed" in line:
@@ -206,3 +212,7 @@ if st.button("Run"):
         st.success("✅ Pipeline completed successfully!")
     else:
         st.error(f"❌ Pipeline failed with exit code {process.returncode}")
+    if run:
+        run_id, log_path = run
+        st.caption(f"Run {run_id}" + (f" · log: {log_path}" if log_path else " · no log file")
+                   + " (quote the run ID when reporting a problem)")
