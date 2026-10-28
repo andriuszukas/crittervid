@@ -52,7 +52,7 @@ A new module, `crittervid/log.py`.
      This is where a failure before the output folder exists ends up, such as a bad option or a missing input folder.
 
      Two processes can write it at once, such as a run started from the GUI and one in a terminal. Rotating while the other has it open fails on Windows, so it never rotates mid-run. Instead, `start_run` moves it aside if it's over 1 MB, keeping five old files, and ignores a failure to do so; the next run tries again.
-3. **Prints `Run 3f9a2c1e started; log: <run log path>`** as the first line. The GUI only learns the output folder through the child process it starts, so it reads the ID and the path from this line, which makes the line's format part of the contract. A bug report can quote the ID.
+3. **Prints `Run 3f9a2c1e started; log: <path>`** as the first line. The path is absolute and names the run log, or the app log when there's no run log. If neither can be written, the line is `Run 3f9a2c1e started (no log file)`. `CRITTERVID_LOG_DIR` overrides the app log's folder, which the tests use. The GUI only learns the output folder through the child process it starts, so it reads the ID and the path from this line, which makes the line's format part of the contract. A bug report can quote the ID.
 
 **Standard output and error:** setting up the streams moves into `log.py`: UTF-8, line-buffered, and `errors='replace'` for characters the console can't show. Today `pipeline` and each step do this themselves. When there's no console at all (`sys.stdout` is `None`, for example under `pythonw`), the console output is left out and the logs still work.
 

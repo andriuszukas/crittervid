@@ -187,3 +187,56 @@ def test_the_formatter_never_raises():
     record.file = Unprintable()
 
     json.loads(log.JsonFormatter().format(record))   # still valid JSON
+
+
+def test_a_console_that_cant_be_reconfigured_is_used_as_it_is(logs, monkeypatch):
+    import io
+    tmp_path, _ = logs
+    console = io.StringIO()
+    monkeypatch.setattr(sys, 'stdout', console)
+
+    log.start_run(None, 'convert')
+    log.get('convert').info('SUCCESS: done')
+
+    assert 'SUCCESS: done' in console.getvalue()
+
+
+def test_the_first_line_says_when_there_is_no_log_file(logs, monkeypatch):
+    tmp_path, capsys = logs
+    blocked = tmp_path / 'blocked'
+    blocked.write_text('a file where the log folder should be')
+    monkeypatch.setenv('CRITTERVID_LOG_DIR', str(blocked))
+
+    run = log.start_run(None, 'validate', run_log=False)
+
+    assert f'Run {run.id} started (no log file)' in console_text(capsys)
+
+
+def test_the_first_line_names_the_run_log_by_its_full_path(logs, monkeypatch):
+    tmp_path, capsys = logs
+    monkeypatch.chdir(tmp_path)
+
+    run = log.start_run(PipelineConfig(output_dir='out'))
+
+    assert run.run_log.is_absolute()
+    assert f'log: {run.run_log}' in console_text(capsys)
+
+
+def test_a_failing_log_doesnt_raise_when_the_console_is_gone(logs):
+    tmp_path, _ = logs
+    (tmp_path / 'out').write_text('a file where the output folder should be')
+    import io
+    console = io.StringIO()
+    handler = log._LogFile(tmp_path / 'out' / 'logs' / 'x.jsonl', console)
+    console.close()
+
+    handler.handle(logging.LogRecord('crittervid.convert', logging.INFO, __file__, 1, 'x', (), None))   # no error
+
+
+def test_deeper_logger_names_belong_to_their_step(logs):
+    tmp_path, _ = logs
+    run = log.start_run(PipelineConfig(output_dir=tmp_path / 'out'))
+    log.get('convert.worker').info('x')
+    log.stop_run()
+
+    assert records(run.run_log)[-1]['step'] == 'convert'

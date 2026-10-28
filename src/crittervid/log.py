@@ -76,10 +76,14 @@ def setup_streams():
     """Write UTF-8 to the console whatever its code page, replacing what it can't
     show, and flush each line so output stays in order when it's piped (the GUI,
     `| tee`). The streams are None when there's no console at all (pythonw)."""
-    if sys.stdout is not None:
-        sys.stdout.reconfigure(line_buffering=True, encoding='utf-8', errors='replace')
-    if sys.stderr is not None:
-        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    for stream, options in ((sys.stdout, {'line_buffering': True}), (sys.stderr, {})):
+        # Streams without it (e.g. a StringIO in place of stdout) are left as they are
+        reconfigure = getattr(stream, 'reconfigure', None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding='utf-8', errors='replace', **options)
+            except (OSError, ValueError):
+                pass
 
 
 class _Context(logging.Filter):
@@ -90,7 +94,9 @@ class _Context(logging.Filter):
         run = _run
         record.run = run.id if run else None
         name = record.name
-        record.step = name[len(LOGGER) + 1:] if name.startswith(LOGGER + '.') else (run.command if run else None)
+        # crittervid.convert (or crittervid.convert.anything) -> convert; crittervid -> the command
+        record.step = (name[len(LOGGER) + 1:].split('.')[0] if name.startswith(LOGGER + '.')
+                       else (run.command if run else None))
         record.elapsed_s = round(time.monotonic() - run.started, 3) if run else None
         return True
 
@@ -125,11 +131,15 @@ class JsonFormatter(logging.Formatter):
             if hasattr(record, key):
                 data[key] = getattr(record, key)
         if record.exc_info:
-            data['traceback'] = self.formatException(record.exc_info)
+            try:
+                data['traceback'] = self.formatException(record.exc_info)
+            except Exception:
+                data['traceback'] = repr(record.exc_info[1])
         try:
             return json.dumps(data, default=str)
-        except Exception:   # e.g. a value whose str() fails
-            return json.dumps({k: repr(v) for k, v in data.items()})
+        except Exception:   # e.g. a value whose str() fails: keep the fixed fields' types
+            fixed = ('schema', 'time', 'run', 'level', 'step', 'elapsed_s')
+            return json.dumps({k: (v if k in fixed else repr(v)) for k, v in data.items()}, default=repr)
 
 
 class _LogFile(logging.FileHandler):
@@ -159,10 +169,12 @@ class _LogFile(logging.FileHandler):
             return
         self._failed = True
         error = sys.exc_info()[1]
-        if self._console is not None:
+        try:   # logging must never raise, even if the console is gone by now
             self._console.write(f"WARNING: can't write the log {self.baseFilename} ({error}); "
                                 f"carrying on without it\n")
             self._console.flush()
+        except Exception:
+            pass
 
 
 def _move_aside(path):
@@ -192,8 +204,10 @@ def start_run(config=None, command='run', verbose=False, run_log=True):
     log only when run_log is true and there's a config (commands that write
     output, not dry runs). Calling it again replaces the earlier setup.
 
-    The first record, also on the console, is `Run <id> started; log: <path>`:
-    the GUI reads the ID and the run log's path from it."""
+    The first record, also on the console, is `Run <id> started; log: <path>`,
+    naming the run log (or the app log if there's no run log), or
+    `Run <id> started (no log file)` if neither can be written. The GUI reads
+    the ID and the path from it, so this format is fixed."""
     global _run
     stop_run()
     setup_streams()
@@ -221,7 +235,8 @@ def start_run(config=None, command='run', verbose=False, run_log=True):
             console.write(f"WARNING: can't use the app log folder ({e}); carrying on without it\n")
 
     if run_log and config is not None:
-        _run.run_log = config.output_dir / 'logs' / f"{now:%Y%m%dT%H%M%SZ}_{_run.id}.jsonl"
+        # Absolute, so whoever reads the first line finds it wherever they run
+        _run.run_log = Path(os.path.abspath(config.output_dir / 'logs' / f"{now:%Y%m%dT%H%M%SZ}_{_run.id}.jsonl"))
         _handlers.append(_LogFile(_run.run_log, console))
 
     for handler in _handlers:
@@ -232,7 +247,7 @@ def start_run(config=None, command='run', verbose=False, run_log=True):
         logger.addHandler(handler)
 
     shown = _run.run_log or _run.app_log
-    logger.info(f'Run {_run.id} started; log: {shown}',
+    logger.info(f'Run {_run.id} started; log: {shown}' if shown else f'Run {_run.id} started (no log file)',
                 extra={'command': command, 'settings': _settings(config) if config is not None else None})
     return _run
 
