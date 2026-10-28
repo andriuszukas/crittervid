@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import re
 import argparse
 import sys
+import time
 from . import log, media_format
 from .config import PipelineConfig
 from .ffmpeg import PATH_TEXT, get_ffmpeg_path, get_ffprobe_path, media_arg
@@ -71,7 +72,7 @@ def merge_group(start, end, files, summary, record, k, n, config):
     sources = [source_name(f, config) for _, f in files]
     if not config.force_merge and up_to_date(out_path, sources, files, record):
         msg = f"SKIPPED: {out_path} is up to date ({len(files)} files)"
-        say(msg)
+        say(msg, file=str(out_path))
         summary.append(msg)
         return out_path
     # Write to a temp file and rename on success, so a failed merge never leaves
@@ -106,12 +107,16 @@ def merge_group(start, end, files, summary, record, k, n, config):
     # of each segment's AAC track doesn't add up into drift over a long merge
     cmd = [get_ffmpeg_path(), '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac',
            *media_format.creation_time_args(file_start(files[0][1])), '-f', 'mp4', media_arg(tmp_path)]
+    started = time.monotonic()
+    _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(out_path)})
     result = subprocess.run(cmd, capture_output=True)
+    took = {'file': str(out_path), 'duration_s': round(time.monotonic() - started, 3)}
     filelist_path.unlink()
     if result.returncode != 0:
         tmp_path.unlink(missing_ok=True)
-        error_msg = f"Failed to merge {out_name}: {result.stderr.decode('utf-8', errors='replace')}"
-        say(error_msg)
+        last, tail = log.ffmpeg_failure(result.stderr)
+        error_msg = f"Failed to merge {out_name}: {last} (full FFmpeg output in the run log)"
+        say(error_msg, ffmpeg_stderr=tail, **took)
         summary.append(f"ERROR: {error_msg}")
         return False
     # Record what the new file holds before it replaces the old one, together
@@ -147,7 +152,7 @@ def merge_group(start, end, files, summary, record, k, n, config):
         return fail(f"couldn't replace the earlier file: {e}")
     record[out_name] = sources   # written with the day's other changes
     success_msg = f"Merged {len(files)} files -> {out_path}"
-    say(success_msg)
+    say(success_msg, **took)
     summary.append(f"SUCCESS: {success_msg}")
     return out_path
 
