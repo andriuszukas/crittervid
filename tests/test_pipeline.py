@@ -1132,3 +1132,54 @@ def test_an_unexpected_error_prints_one_line_and_logs_its_traceback(tmp_path, mo
     record = json.loads(run_.run_log.read_text(encoding='utf-8').splitlines()[-1])
     assert record['level'] == 'ERROR' and "RuntimeError('disk on fire')" in record['message']
     assert 'Traceback' in record['traceback'] and 'disk on fire' in record['traceback']
+
+
+
+def test_a_failed_ffmpeg_call_shows_its_last_line_and_logs_more(ws):
+    ws.add_media('0001.media', b'BAD')
+
+    result = ws.run('convert_media.py', '--accel', 'cpu')
+
+    [line] = [l for l in result.stdout.splitlines() if l.startswith('ERROR: Failed to convert')]
+    assert line.endswith('fake ffmpeg: simulated failure (full FFmpeg output in the run log)')
+    _, records = run_log_records(ws)
+    [record] = [r for r in records if r['message'] == line]
+    assert 'simulated failure' in record['ffmpeg_stderr']
+    assert record['file'].endswith('0001.media') and isinstance(record['duration_s'], float)
+    summary = (ws.root / 'output' / 'conversion_summary.txt').read_text(encoding='utf-8')
+    assert line in summary
+
+
+def test_ffmpeg_output_kept_for_the_logs_is_its_last_lines():
+    from crittervid import log
+    stderr = ''.join(f'line {i}\n' for i in range(50)).encode() + b'\n\n'
+
+    last, tail = log.ffmpeg_failure(stderr)
+
+    assert last == 'line 49'
+    assert tail.splitlines() == [f'line {i}' for i in range(30, 50)]
+    assert log.ffmpeg_failure(b'') == ('no error output', '')
+
+
+def test_results_say_which_file_and_how_long_it_took(ws):
+    ws.add_media('0001.media', b'good')
+
+    assert ws.run('process_all.py', '--accel', 'cpu').returncode == 0
+
+    _, records = run_log_records(ws)
+    results = [r for r in records if r['message'].startswith(('SUCCESS', 'Merged'))]
+    assert {r['step'] for r in results} == {'convert', 'merge'}
+    assert all(r['file'] and isinstance(r['duration_s'], float) for r in results)
+
+
+@pytest.mark.parametrize('verbose', [False, True])
+def test_ffmpeg_command_lines_are_details(ws, verbose):
+    ws.add_media('0001.media', b'good')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', *(['--verbose'] if verbose else []))
+
+    assert ('FFmpeg: ' in result.stdout) == verbose
+    _, records = run_log_records(ws)
+    commands = [r for r in records if r['message'].startswith('FFmpeg: ')]
+    assert {r['step'] for r in commands} == {'convert', 'merge'}   # always in the log
+    assert all(r['level'] == 'DEBUG' for r in commands)

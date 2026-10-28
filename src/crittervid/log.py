@@ -57,6 +57,23 @@ def say(logger, message, level=None, **extra):
     logger.log(level_of(message) if level is None else level, message, extra=extra or None)
 
 
+FFMPEG_TAIL_LINES = 20
+
+
+def ffmpeg_failure(stderr):
+    """What to tell about a failed FFmpeg call from its error output (bytes):
+    its last line, for the console and the summary, and its last
+    FFMPEG_TAIL_LINES lines, for the logs (`ffmpeg_stderr`)."""
+    lines = [line for line in stderr.decode('utf-8', errors='replace').splitlines() if line.strip()]
+    last = lines[-1].strip() if lines else 'no error output'
+    return last, '\n'.join(lines[-FFMPEG_TAIL_LINES:])
+
+
+def command_line(cmd):
+    """A command for the logs, as one line."""
+    return ' '.join(str(part) for part in cmd)
+
+
 def file_only(logger, level, message, **extra):
     """Log a message to the log files but not the console, for lines the
     console already shows another way (e.g. option errors on stderr)."""

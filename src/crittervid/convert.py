@@ -9,6 +9,7 @@ import re
 import signal
 import tempfile
 import threading
+import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import platform
 from . import log, media_format
@@ -196,8 +197,8 @@ def record_format_command(video, audio, out_path, workdir, start=None):
             *([] if start is None else media_format.creation_time_args(start)), '-f', 'mp4', media_arg(out_path)]
 
 
-def report(summary, msg):
-    say(msg)
+def report(summary, msg, **extra):
+    say(msg, **extra)
     summary.append(msg)
 
 
@@ -213,9 +214,14 @@ def convert_event(event_dir, segments, summary, failed_files, config):
     out_dir = config.output_dir / yyyy / mm / dd
     out_path = out_dir / f'{folder}.mp4'
     tmp_path = out_dir / f'{folder}.mp4.part'
+    started = time.monotonic()
+
+    def took():
+        return {'file': str(event_dir), 'duration_s': round(time.monotonic() - started, 3)}
+
     try:
         if out_path.exists():
-            report(summary, f"SKIPPED: {event_dir} -> {out_path} (already exists)")
+            report(summary, f"SKIPPED: {event_dir} -> {out_path} (already exists)", file=str(event_dir))
             return True
         try:
             video, audio, notes = read_event(segments)
@@ -224,16 +230,19 @@ def convert_event(event_dir, segments, summary, failed_files, config):
         out_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='crittervid-') as workdir:
             cmd = record_format_command(video, audio, tmp_path, Path(workdir), start=int(folder.split('_')[0]))
+            _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(event_dir)})
             result = run_ffmpeg(cmd, config.cancel)
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
-            report(summary, f"ERROR: Failed to convert {event_dir}: {result.stderr.decode('utf-8', errors='replace')}")
+            last, tail = log.ffmpeg_failure(result.stderr)
+            report(summary, f"ERROR: Failed to convert {event_dir}: {last} (full FFmpeg output in the run log)",
+                   ffmpeg_stderr=tail, **took())
             failed_files.append(str(event_dir))
             return False
         tmp_path.replace(out_path)
         sound = 'audio AAC' if audio else 'silent audio (none recorded)'
         report(summary, f"SUCCESS: Converted {event_dir} ({len(segments)} segments) -> {out_path} "
-                        f"[video copied with camera timestamps, {sound}]")
+                        f"[video copied with camera timestamps, {sound}]", **took())
         for note in notes:
             report(summary, f"WARNING: {event_dir}: {note}")
         # The folder name gives the event's length; footage that doesn't match it
@@ -278,7 +287,7 @@ def convert_media_file(media_path, summary, accel, failed_files, config):
         tmp_path = out_dir / (out_name + '.part')
         if out_path.exists():
             skip_msg = f"SKIPPED: {media_path} -> {out_path} (already exists)"
-            say(skip_msg)
+            say(skip_msg, file=str(media_path))
             summary.append(skip_msg)
             return True
         # Files that aren't in the cameras' record format: let FFmpeg read them directly.
@@ -292,11 +301,15 @@ def convert_media_file(media_path, summary, accel, failed_files, config):
             input_opts, output_opts = ACCEL_OPTIONS[accel]
             cmd = [get_ffmpeg_path(), '-y'] + input_opts + ['-i', media_arg(media_path)] + output_opts + output + [media_arg(tmp_path)]
             method = accel
+        started = time.monotonic()
+        _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(media_path)})
         result = run_ffmpeg(cmd, config.cancel)
+        took = {'file': str(media_path), 'duration_s': round(time.monotonic() - started, 3)}
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
-            error_msg = f"ERROR: Failed to convert {media_path}: {result.stderr.decode('utf-8', errors='replace')}"
-            say(error_msg)
+            last, tail = log.ffmpeg_failure(result.stderr)
+            error_msg = f"ERROR: Failed to convert {media_path}: {last} (full FFmpeg output in the run log)"
+            say(error_msg, ffmpeg_stderr=tail, **took)
             summary.append(error_msg)
             failed_files.append(str(media_path))
             return False
@@ -304,7 +317,7 @@ def convert_media_file(media_path, summary, accel, failed_files, config):
             tmp_path.replace(out_path)
             verb = 'Copied' if method == 'copy' else 'Converted'
             success_msg = f"SUCCESS: {verb} {media_path} -> {out_path} [{method}]"
-            say(success_msg)
+            say(success_msg, **took)
             summary.append(success_msg)
             return True
     except Stopped:
