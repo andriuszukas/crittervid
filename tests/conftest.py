@@ -98,6 +98,8 @@ def make_workspace(tmp_path, path_prefix=None):
     env['PYTHONPATH'] = os.pathsep.join([str(app / 'src')] + [p for p in env.get('PYTHONPATH', '').split(os.pathsep) if p])
     for var in ('CRITTERVID_FFMPEG', 'CRITTERVID_FFPROBE'):
         env.pop(var, None)
+    # The app log goes to the test's folder, not the user's
+    env['CRITTERVID_LOG_DIR'] = str(tmp_path / 'app-logs')
     if path_prefix:
         env['PATH'] = str(path_prefix) + os.pathsep + env['PATH']
     return Workspace(app, env)

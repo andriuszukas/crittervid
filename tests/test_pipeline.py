@@ -1046,3 +1046,88 @@ def test_a_run_rejects_counts_below_one_without_a_traceback(ws, option):
     assert 'must be at least 1' in result.stderr
     assert 'Traceback' not in result.stdout + result.stderr
     assert not ws.converted('0001.media').exists()
+
+
+# --- Logs of a run (#26) ---
+
+def run_log_records(ws):
+    [path] = (ws.root / 'output' / 'logs').glob('*.jsonl')
+    return path, [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+
+
+def test_a_run_writes_one_log_with_one_id(ws):
+    ws.add_media('0001.media', b'good')
+
+    result = ws.run('process_all.py', '--accel', 'cpu')
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    path, records = run_log_records(ws)
+    first = result.stdout.splitlines()[0]
+    run_id = records[0]['run']
+    assert first == f'Run {run_id} started; log: {path}'
+    assert {r['run'] for r in records} == {run_id}
+    assert {'convert', 'merge', 'validate'} <= {r['step'] for r in records}
+    # Every console line is in the log, in the same words
+    messages = [r['message'] for r in records]
+    for line in result.stdout.splitlines():
+        assert line in messages, line
+    # The app log has the run too
+    app_log = ws.root.parent / 'app-logs' / 'crittervid.log'
+    assert any(json.loads(line)['run'] == run_id for line in app_log.read_text(encoding='utf-8').splitlines())
+
+
+def test_warnings_and_errors_are_logged_at_their_level(ws):
+    ws.add_media('0001.media', b'BAD')
+
+    ws.run('convert_media.py', '--accel', 'cpu')
+
+    _, records = run_log_records(ws)
+    levels = {r['message'].split(':', 1)[0]: r['level'] for r in records if r['message'].startswith(('ERROR', 'SUCCESS'))}
+    assert levels.get('ERROR') == 'ERROR'
+
+
+def test_a_dry_run_or_a_validation_writes_no_run_log(ws):
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    (ws.root / 'output' / 'logs').rename(ws.root / 'conversion-logs')
+
+    dry = ws.run('process_all.py', '--dry-run')
+    checked = ws.run('validate_output.py')
+
+    assert dry.returncode == 0 and checked.returncode == 0
+    assert not (ws.root / 'output' / 'logs').exists()
+    assert 'log: ' in checked.stdout.splitlines()[0]   # names the app log instead
+
+
+def test_an_option_error_stays_on_stderr_and_is_logged(ws):
+    ws.add_media('0001.media', b'good')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--splits-per-day', '0')
+
+    assert result.stderr.count('--splits-per-day must be 1 to 1440') == 1
+    assert '--splits-per-day must be' not in result.stdout
+    _, records = run_log_records(ws)
+    [error] = [r for r in records if '--splits-per-day must be' in r['message']]
+    assert error['level'] == 'ERROR' and error['step'] == 'merge'
+
+
+def test_an_unexpected_error_prints_one_line_and_logs_its_traceback(tmp_path, monkeypatch, capsys):
+    import types
+    from crittervid import log, pipeline
+    from crittervid.config import PipelineConfig
+    monkeypatch.setenv('CRITTERVID_LOG_DIR', str(tmp_path / 'app-logs'))
+
+    def run(config):
+        raise RuntimeError('disk on fire')
+
+    run_ = log.start_run(PipelineConfig(output_dir=tmp_path / 'out'))
+    try:
+        assert pipeline.run_step(types.SimpleNamespace(run=run, __name__='crittervid.merge'), None) == 1
+    finally:
+        log.stop_run()
+
+    out = capsys.readouterr()
+    assert 'ERROR: merge failed unexpectedly' in out.out and 'Traceback' not in out.out + out.err
+    record = json.loads(run_.run_log.read_text(encoding='utf-8').splitlines()[-1])
+    assert record['level'] == 'ERROR' and "RuntimeError('disk on fire')" in record['message']
+    assert 'Traceback' in record['traceback'] and 'disk on fire' in record['traceback']

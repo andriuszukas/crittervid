@@ -12,7 +12,7 @@ import importlib
 import signal
 import sys
 
-from . import __version__
+from . import __version__, log
 
 # Command name -> module whose main(argv) runs it
 COMMANDS = {
@@ -50,5 +50,7 @@ def main(argv=None):
     try:
         return module.main(args)
     except KeyboardInterrupt:
-        print('=== Stopped by user (Ctrl+C) ===')
+        log.say(log.get(command), '=== Stopped by user (Ctrl+C) ===')
         return 1
+    finally:
+        log.stop_run()   # write out what's left, also after Ctrl+C
