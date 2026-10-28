@@ -1,6 +1,6 @@
 # 0004: Pipeline steps declare themselves
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-28), with the recommended answers to both questions
 - **Issues:** #25 (step interface), for the planned steps: animal detection (#54), splitting by animal presence (#55), behaviour models (#56) and exports (#50, #52)
 
 ## Context
@@ -82,7 +82,7 @@ The runner, the CLI and the summary need no change.
   - The CLI offers each step as a command.
 - `.github/copilot-instructions.md` describes how to add a step.
 
-## Questions for you
+## Questions (answered: the recommended options)
 
 1. **Leave plug-in discovery and plug-in settings to #54,** so the first real plug-in shapes them? Recommended. Designing them now, with no plug-in to try them on, risks guessing wrong.
 2. **Stop the run between any two steps when it's cancelled,** as it does after the conversion today? Recommended, because a GUI Stop button (#42) can only signal through the token.
