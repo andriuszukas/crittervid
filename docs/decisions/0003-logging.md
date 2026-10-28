@@ -1,6 +1,6 @@
 # 0003: Logging with run IDs, a log per run and an app log
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-28), with the recommended answers to the questions at the end
 - **Issues:** #26 (structured logging). It's the base for #45 (diagnostics zip), #29 (`crittervid doctor`) and #57 (optional OpenTelemetry), and it helps #25 (step interface).
 
 ## Context
@@ -126,7 +126,7 @@ The logs contain file paths and nothing else about the user. They stay on the us
 
 Not planned for now: a `--log-file` override or `--log-level` (`--verbose` covers the need), and a log level choice in the GUI.
 
-## Questions for you
+## Questions (answered: the recommended options)
 
 1. **Run logs in `<output>/logs/`?** Recommended. They stay next to the footage they describe, so a run's outputs and its log travel together. The alternative is the app log folder only.
 2. **Keep the summary files until the manifest (#37)?** Recommended. They're what users look at today, and `process_all` reads the merge's.
