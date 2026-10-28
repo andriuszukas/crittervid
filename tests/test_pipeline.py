@@ -1183,3 +1183,20 @@ def test_ffmpeg_command_lines_are_details(ws, verbose):
     commands = [r for r in records if r['message'].startswith('FFmpeg: ')]
     assert {r['step'] for r in commands} == {'convert', 'merge'}   # always in the log
     assert all(r['level'] == 'DEBUG' for r in commands)
+
+
+
+@pytest.mark.parametrize('output, reason', [
+    ('missing_encoder.txt', 'Could not open encoder before EOF'),
+    ('concat_missing_file.txt', "Impossible to open 'nonexist.mp4'"),
+    ('not_a_video.txt', 'moov atom not found'),
+    (None, 'fake ffmpeg: simulated failure'),
+])
+def test_a_failure_is_told_by_the_line_that_says_why(output, reason):
+    # Real FFmpeg 9.0.2 error output (tests/ffmpeg_errors), which ends with
+    # generic lines such as "Conversion failed!"
+    from crittervid import log
+    stderr = ((Path(__file__).parent / 'ffmpeg_errors' / output).read_bytes() if output
+              else b'fake ffmpeg: simulated failure\n')
+
+    assert log.ffmpeg_failure(stderr)[0] == reason

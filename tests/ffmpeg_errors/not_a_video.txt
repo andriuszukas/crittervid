@@ -1,0 +1,5 @@
+[in#0 @ 0x0] Format mov,mp4,m4a,3gp,3g2,mj2 detected only with low score of 1, misdetection possible!
+[in#0 @ 0x0] moov atom not found
+[in#0 @ 0x0] Error opening input: Invalid data found when processing input
+Error opening input file bad.mp4.
+Error opening input files: Invalid data found when processing input

@@ -17,7 +17,10 @@ import dataclasses
 import json
 import logging
 import os
+import re
 import secrets
+import shlex
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -58,20 +61,40 @@ def say(logger, message, level=None, **extra):
 
 
 FFMPEG_TAIL_LINES = 20
+# Lines FFmpeg ends a failure with that say nothing about the cause
+_FFMPEG_TRAILER = re.compile(r'(Conversion failed!|frame=|size=|Lsize=|video:|Nothing was written into output file'
+                             r'|Task finished with error code|Terminating thread|Exiting normally)')
+# Its summary of an input that couldn't be opened; the cause is in a line before it
+_FFMPEG_SUMMARY = re.compile(r'Error opening (input|output) file')
+_FFMPEG_ERROR = re.compile(r'error|could not|cannot|impossible|not found|no such|invalid|unknown encoder|'
+                           r'unsupported|denied|failed', re.I)
+_FFMPEG_PREFIX = re.compile(r'^(\[[^\]]*\]\s*)+')   # [enc:h264_nvenc @ 0x...] and the like
 
 
 def ffmpeg_failure(stderr):
     """What to tell about a failed FFmpeg call from its error output (bytes):
-    its last line, for the console and the summary, and its last
-    FFMPEG_TAIL_LINES lines, for the logs (`ffmpeg_stderr`)."""
-    lines = [line for line in stderr.decode('utf-8', errors='replace').splitlines() if line.strip()]
-    last = lines[-1].strip() if lines else 'no error output'
-    return last, '\n'.join(lines[-FFMPEG_TAIL_LINES:])
+    the line that best says why, for the console and the summary, and its last
+    FFMPEG_TAIL_LINES lines, for the logs (`ffmpeg_stderr`).
+
+    FFmpeg ends a failure with generic lines ("Conversion failed!", progress,
+    "Error opening input files: ..."), so the best line is the last one that
+    reads like a specific error, e.g. "Could not open encoder before EOF",
+    "Impossible to open 'missing.mp4'" or "moov atom not found"."""
+    lines = [line.strip() for line in stderr.decode('utf-8', errors='replace').splitlines() if line.strip()]
+    tail = '\n'.join(lines[-FFMPEG_TAIL_LINES:])
+    shown = [_FFMPEG_PREFIX.sub('', line) for line in lines]
+    shown = [line for line in shown if line and not _FFMPEG_TRAILER.match(line)]
+    if not shown:
+        return (lines[-1] if lines else 'no error output'), tail
+    errors = [line for line in shown if _FFMPEG_ERROR.search(line)]
+    specific = [line for line in errors if not _FFMPEG_SUMMARY.match(line) and not line.startswith('Error opening input:')]
+    return (specific or errors or shown)[-1], tail
 
 
 def command_line(cmd):
-    """A command for the logs, as one line."""
-    return ' '.join(str(part) for part in cmd)
+    """A command for the logs, as one line that can be pasted into a shell."""
+    parts = [str(part) for part in cmd]
+    return subprocess.list2cmdline(parts) if sys.platform == 'win32' else shlex.join(parts)
 
 
 def file_only(logger, level, message, **extra):
