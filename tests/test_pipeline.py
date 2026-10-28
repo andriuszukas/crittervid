@@ -959,24 +959,25 @@ def test_ffmpeg_can_be_named_with_an_environment_variable(tmp_path, fake_ffmpeg_
     assert ws.converted('0001.media').read_bytes() == b'OKgood'
 
 
-def fake_step(name, run, **fields):
-    """A Step whose run() is the given function."""
+def fake_step(monkeypatch, name, run, **fields):
+    """A Step whose run() is the given function (its module is removed again
+    after the test)."""
     import types
     from crittervid import steps
     module = types.ModuleType(f'test_step_{name}')
     module.run = run
-    sys.modules[module.__name__] = module
+    monkeypatch.setitem(sys.modules, module.__name__, module)
     return steps.Step(name, module.__name__, f'Test step {name}', options=lambda config: ['--test'], **fields)
 
 
 @pytest.mark.parametrize('code, expected, printed', [(None, 0, ''), (0, 0, ''), (3, 3, ''), ('no such folder', 1, 'no such folder')])
-def test_a_step_that_exits_is_reported_as_python_would(code, expected, printed, capsys):
+def test_a_step_that_exits_is_reported_as_python_would(code, expected, printed, capsys, monkeypatch):
     from crittervid import pipeline
 
     def run(config):
         raise SystemExit(code)
 
-    assert pipeline.run_step(fake_step('exits', run), None) == expected
+    assert pipeline.run_step(fake_step(monkeypatch, 'exits', run), None) == expected
     assert capsys.readouterr().err.strip() == printed
 
 
@@ -1132,7 +1133,7 @@ def test_an_unexpected_error_prints_one_line_and_logs_its_traceback(tmp_path, mo
 
     run_ = log.start_run(PipelineConfig(output_dir=tmp_path / 'out'))
     try:
-        assert pipeline.run_step(fake_step('merge', run), None) == 1
+        assert pipeline.run_step(fake_step(monkeypatch, 'merge', run), None) == 1
     finally:
         log.stop_run()
 
@@ -1219,7 +1220,7 @@ def test_a_new_step_runs_at_its_place_and_shows_in_dry_runs_and_the_summary(monk
     order = []
     for name in ('convert', 'merge', 'validate'):
         monkeypatch.setattr(f'crittervid.{name}.run', lambda config, name=name: order.append(name) or 0)
-    extra = fake_step('detect', lambda config: order.append('detect') or 0,
+    extra = fake_step(monkeypatch, 'detect', lambda config: order.append('detect') or 0,
                       summary=lambda config, ran, dry_run: ['Detections: none'])
     monkeypatch.setattr(steps, 'STEPS', steps.STEPS[:2] + (extra,) + steps.STEPS[2:])
     from crittervid import log

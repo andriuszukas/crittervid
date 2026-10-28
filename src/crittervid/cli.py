@@ -18,9 +18,9 @@ from .steps import STEPS
 
 # Command name -> module whose main(argv) runs it: a whole run, each step, the GUI
 COMMANDS = {
-    'run': 'pipeline',
-    **{step.name: step.module.split('.', 1)[1] for step in STEPS},
-    'gui': 'gui.launch',
+    'run': 'crittervid.pipeline',
+    **{step.name: step.module for step in STEPS},
+    'gui': 'crittervid.gui.launch',
 }
 
 
@@ -46,7 +46,7 @@ def main(argv=None):
     # like Ctrl+C
     if hasattr(signal, 'SIGBREAK'):
         signal.signal(signal.SIGBREAK, signal.default_int_handler)
-    module = importlib.import_module(f'{__package__}.{COMMANDS[command]}')
+    module = importlib.import_module(COMMANDS[command])
     try:
         return module.main(args)
     except KeyboardInterrupt:
