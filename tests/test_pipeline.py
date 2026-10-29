@@ -58,7 +58,7 @@ def test_copy_mode_copies_the_video_stream(ws):
 @pytest.mark.parametrize(('accel', 'hwaccel', 'encoder'), [
     ('cuda', 'cuda', 'h264_nvenc'),
     ('qsv', 'qsv', 'h264_qsv'),
-    ('vaapi', 'vaapi', 'h264_vaapi'),
+    ('vaapi', None, 'h264_vaapi'),   # decodes on the CPU, uploads to the GPU
     ('amf', 'dxva2', 'h264_amf'),
     ('cpu', None, None),
 ])
@@ -73,6 +73,9 @@ def test_accel_options_reach_ffmpeg(ws, accel, hwaccel, encoder):
     if hwaccel:
         # Decoder option before the input, encoder after it
         assert args[args.index('-hwaccel') + 1] == hwaccel and args.index('-hwaccel') < i
+        assert args[args.index('-c:v') + 1] == encoder and args.index('-c:v') > i
+    elif encoder:
+        assert '-hwaccel' not in args and args.index('-vaapi_device') < i
         assert args[args.index('-c:v') + 1] == encoder and args.index('-c:v') > i
     else:
         assert '-hwaccel' not in args and '-c:v' not in args
@@ -1368,3 +1371,95 @@ def test_doctor_reports_an_output_folder_it_cant_write(tmp_path, monkeypatch, ca
 
     assert doctor.check_output(tmp_path) is True
     assert "ERROR: can't write to" in capsys.readouterr().out
+
+
+
+# --- Choosing the encoder (#10) ---
+
+def test_auto_picks_the_first_encoder_that_works(ws):
+    ws.add_media('0001.media', b'good')   # not in the record format, so it's encoded
+    ws.env['FAKE_FFMPEG_ENCODERS'] = 'libx264,h264_amf,h264_qsv'
+
+    result = ws.run('convert_media.py', '--accel', 'auto')
+
+    assert result.returncode == 0, result.stdout
+    assert 'Auto-detected acceleration: amf' in result.stdout   # AMD before Intel
+    assert '[amf]' in result.stdout
+
+
+def test_auto_uses_the_cpu_when_no_gpu_encoder_works(ws):
+    ws.add_media('0001.media', b'good')
+
+    result = ws.run('convert_media.py', '--accel', 'auto')
+
+    assert 'Auto-detected acceleration: cpu' in result.stdout and '[cpu]' in result.stdout
+
+
+def test_auto_tries_no_encoders_when_nothing_needs_encoding(ws):
+    ws.env['FAKE_FFMPEG_LOG'] = str(ws.root / 'calls')
+    ws.add_media('0001.media', b'good')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0   # converted already
+
+    result = ws.run('convert_media.py', '--accel', 'auto')
+
+    assert 'Auto-detected' not in result.stdout
+    assert not any('lavfi' in call for call in ws.ffmpeg_calls())
+
+
+def test_a_failed_gpu_encode_is_done_again_on_the_cpu(ws):
+    ws.add_media('0001.media', b'good')
+    ws.env['FAKE_FFMPEG_FAIL_ENCODERS'] = 'h264_nvenc'
+
+    result = ws.run('convert_media.py', '--accel', 'cuda')
+
+    assert result.returncode == 0, result.stdout
+    assert 'failed with cuda (The encoder stopped working); trying the CPU' in result.stdout
+    assert '[cpu, after cuda failed]' in result.stdout
+    assert ws.converted('0001.media').read_bytes() == b'OKgood'
+
+
+def test_vaapi_uploads_frames_to_its_device():
+    from crittervid.ffmpeg import ACCEL_OPTIONS, VAAPI_DEVICE
+    input_opts, output_opts = ACCEL_OPTIONS['vaapi']
+
+    assert input_opts == ['-vaapi_device', VAAPI_DEVICE]
+    assert output_opts == ['-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi']
+
+
+
+def test_auto_uses_the_cpu_for_the_rest_after_its_gpu_fails_on_a_file(ws):
+    # The encoder works on the test clip but not on real files
+    for name in ('0001.media', '0002.media', '0003.media'):
+        ws.add_media(name, b'good')
+    ws.env['FAKE_FFMPEG_ENCODERS'] = 'libx264,h264_amf'
+    ws.env['FAKE_FFMPEG_FAIL_ENCODERS'] = 'h264_amf'
+
+    result = ws.run('convert_media.py', '--accel', 'auto', '--workers', '1')
+
+    assert result.returncode == 0, result.stdout
+    assert result.stdout.count('failed with amf') == 1   # only the first file tried it
+    assert 'Auto uses the CPU for the rest of this run' in result.stdout
+    assert result.stdout.count('[cpu]') == 2
+
+
+def test_a_file_the_cpu_cant_do_either_doesnt_turn_auto_off(ws):
+    ws.add_media('0001.media', b'BAD')    # bad for any encoder
+    ws.add_media('0002.media', b'good')
+    ws.env['FAKE_FFMPEG_ENCODERS'] = 'libx264,h264_amf'
+
+    result = ws.run('convert_media.py', '--accel', 'auto', '--workers', '1')
+
+    assert 'Auto uses the CPU' not in result.stdout
+    assert '[amf]' in result.stdout   # the good file still used the GPU
+
+
+def test_what_auto_learnt_doesnt_carry_over_to_the_next_run(monkeypatch, tmp_path):
+    from crittervid import convert
+    from crittervid.config import PipelineConfig
+    monkeypatch.setattr(convert, '_auto_cpu', True)
+    monkeypatch.setattr(convert, '_auto_said', True)
+    monkeypatch.setattr(convert, 'find_media_files', lambda root: [])
+
+    convert.run(PipelineConfig(input_dir=tmp_path / 'none', output_dir=tmp_path / 'out', accel='auto'))
+
+    assert convert._auto_cpu is False and convert._auto_said is False

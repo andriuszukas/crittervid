@@ -72,7 +72,8 @@ def test_app_help_text_matches_deployment_docs():
     assert "Auto** - Automatically detects your GPU (recommended)" not in app_text
     assert "included with standalone executable" not in app_text
     assert "unless the build bundled it" in app_text
-    assert "can't detect NVIDIA cards" in app_text
+    assert "can't detect NVIDIA cards" not in app_text   # Auto tries each encoder now (#2, #10)
+    assert "uses the first that works" in app_text
     assert "into the `_internal` folder" in app_text
 
 

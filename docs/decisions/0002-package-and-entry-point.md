@@ -101,6 +101,8 @@ Looked up when first needed, not when a module is imported. ffmpeg and ffprobe a
 | `gpu` extra | GPUtil, plus WMI on Windows only |
 | `dev` extra | pytest, PyInstaller |
 
+(Later: the `gpu` extra was removed in #105, when Auto started trying the encoders themselves instead of detecting the GPU. The requirements files became `-e .[gui]` and `-e .[gui,dev]`.)
+
 - **Requirements files:** `requirements.txt` and `requirements-dev.txt` become one-line wrappers (`-e .[gui,gpu]` and `-e .[gui,gpu,dev]`). The path is relative to the folder you run pip from, so the README tells you to run them from the project folder, as now.
 - **Version:** read with `importlib.metadata`, falling back to `__init__.__version__`. That covers the built app, which has no package metadata.
 - **Python versions:** nothing used needs more than Python 3.10. `tomllib` isn't needed.

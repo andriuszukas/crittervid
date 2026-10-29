@@ -298,7 +298,7 @@ def run(config):
             elif converted:
                 say('No merged files yet, so merged days are not checked.')
         if deep:
-            from .convert import ACCEL_OPTIONS, detect_accel
+            from .ffmpeg import ACCEL_OPTIONS, detect_accel
             accel = detect_accel() if config.accel == 'auto' else config.accel
             input_opts = ACCEL_OPTIONS.get(accel, ([], []))[0]
             with ThreadPoolExecutor(max_workers=config.workers) as executor:

@@ -55,11 +55,11 @@ with st.expander("📖 Help & Instructions"):
     ### Quick Start
     1. Select your **Input directory** containing `.media` files (typically from `DCIM` folder on camera)
     2. Select your **Output directory** where `.mp4` files will be saved
-    3. Choose hardware acceleration (choosing your GPU explicitly is recommended)
+    3. Choose hardware acceleration (Auto picks a GPU encoder that works on this computer)
     4. Click **Run** and wait for processing to complete
 
     ### Hardware Acceleration
-    - **Auto** - Tries to detect your GPU, but currently can't detect NVIDIA cards, so choose your GPU explicitly
+    - **Auto** - Tries each GPU encoder on a tiny test clip and uses the first that works (otherwise the CPU)
     - **NVIDIA** - Best for NVIDIA graphics cards
     - **Intel** - For Intel integrated graphics
     - **AMD** - For AMD graphics cards
@@ -77,7 +77,7 @@ with st.expander("📖 Help & Instructions"):
     - GPU drivers installed for hardware acceleration
 
     ### Troubleshooting
-    - **Slow processing?** Choose your GPU explicitly under Hardware Acceleration instead of CPU or Auto, or reduce parallel workers
+    - **Slow processing?** Leave Hardware Acceleration on Auto (or choose your GPU) rather than CPU, or reduce parallel workers
     - **Out of memory?** Reduce number of parallel workers
     - **FFmpeg not found?** Install FFmpeg and add it to your PATH. In the packaged app you can also copy `ffmpeg.exe` into the `_internal` folder next to `CritterVid.exe`
     """)

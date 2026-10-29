@@ -14,8 +14,10 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
   Damaged segments (empty files, a cut-off end after power loss) are skipped or trimmed with a
   warning instead of spoiling the event. Each event's length is checked against its folder name.
 - **Hardware acceleration** — only used for `.media` files that aren't in the cameras' usual
-  record format, which FFmpeg has to re-encode: NVIDIA (CUDA), Intel (QSV), AMD (AMF), or CPU.
-  Auto-detection can't detect NVIDIA on Python 3.12+ ([#2](https://github.com/andriuszukas/crittervid/issues/2)), so choose your GPU explicitly.
+  record format, which FFmpeg has to re-encode: NVIDIA (CUDA), AMD (AMF), Intel (QSV), VAAPI
+  (Linux), or CPU. Auto, the default, tries each GPU encoder on a tiny test clip the first time a
+  file needs encoding and uses the first that works, otherwise the CPU. A GPU encode that fails
+  is done again on the CPU. `crittervid doctor` shows which encoders work on your computer.
 - **Merge** converted clips into one or more files per day. `--splits-per-day N` divides each day
   into N equal time windows (to the minute; 2 gives 00:00–12:00 and 12:00–24:00), and each window
   with events becomes one file named after its window. An event belongs to the window it starts in.
@@ -43,7 +45,7 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
   ```bash
   pip install -r requirements.txt
   ```
-  This installs the `crittervid` command, the GUI and the optional GPU detection. The pipeline itself
+  This installs the `crittervid` command and the GUI. The pipeline itself
   needs no other packages. To build the app or run the tests, install `requirements-dev.txt` instead.
 
 ## Input layout
