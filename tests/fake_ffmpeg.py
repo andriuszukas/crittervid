@@ -19,6 +19,9 @@ whose GPU can't decode the file.
 works for the encoders named in FAKE_FFMPEG_ENCODERS (comma-separated; by
 default libx264) and fails like a missing GPU for any other.
 
+FAKE_FFMPEG_FAIL_ENCODERS (comma-separated) names encoders that fail on real
+files too, like a GPU whose driver breaks mid-run.
+
 If FAKE_FFMPEG_SLEEP is set, a conversion first writes its partial output and
 then takes that many seconds, like a long encode (unless its input contains
 b'FAST').
@@ -89,6 +92,9 @@ def main():
             return
         print(f'[enc:{encoder} @ 0x0] Cannot load {encoder} driver', file=sys.stderr)
         print('Conversion failed!', file=sys.stderr)
+        sys.exit(1)
+    if '-c:v' in args and args[args.index('-c:v') + 1] in os.environ.get('FAKE_FFMPEG_FAIL_ENCODERS', '').split(','):
+        print(f'[{args[args.index("-c:v") + 1]} @ 0x0] The encoder stopped working', file=sys.stderr)
         sys.exit(1)
     if os.environ.get('FAKE_FFMPEG_FAIL_HWACCEL') and '-hwaccel' in args:
         print('fake ffmpeg: hardware decoding failed', file=sys.stderr)

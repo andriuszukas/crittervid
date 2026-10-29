@@ -65,8 +65,6 @@ a = Analysis(
         'streamlit.web.bootstrap',
         'streamlit.runtime.caching.storage.dummy_cache_storage',
         'streamlit.runtime.legacy_caching.caching',
-        'GPUtil',
-        'wmi',
         'tkinter',
         'tkinter.filedialog',
         'click',

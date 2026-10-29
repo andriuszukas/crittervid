@@ -6,6 +6,7 @@ import os
 import sys
 import shutil
 import subprocess
+import threading
 
 
 def app_dir():
@@ -147,3 +148,33 @@ def encoder_failure(encoder, stderr):
             if reason:
                 return reason
     return log.ffmpeg_failure(stderr)[0]
+
+
+# FFmpeg options for each --accel choice: (before -i, after -i). VAAPI decodes on
+# the CPU and uploads the frames to the GPU, which works with any input
+ACCEL_OPTIONS = {
+    'cpu': ([], []),
+    'cuda': (['-hwaccel', 'cuda'], ['-c:v', 'h264_nvenc']),
+    'qsv': (['-hwaccel', 'qsv'], ['-c:v', 'h264_qsv']),
+    'vaapi': (['-vaapi_device', VAAPI_DEVICE], ['-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi']),
+    'amf': (['-hwaccel', 'dxva2'], ['-c:v', 'h264_amf']),
+}
+# What --accel auto tries, in order: the discrete GPUs' encoders (NVIDIA, AMD)
+# before Intel's integrated one, then VAAPI (Linux); the CPU if none works
+ACCEL_ORDER = ('cuda', 'amf', 'qsv', 'vaapi')
+
+_detect_lock = threading.Lock()
+_detected = None
+
+
+def detect_accel():
+    """--accel auto: the first encoder in ACCEL_ORDER that encodes a test clip on
+    this machine (see encoder_works), or 'cpu'. Worked out once per run, when
+    first needed."""
+    global _detected
+    with _detect_lock:
+        if _detected is None:
+            _detected = next((accel for accel in ACCEL_ORDER
+                              if (accel != 'vaapi' or sys.platform.startswith('linux')) and encoder_works(accel)[0]),
+                             'cpu')
+        return _detected

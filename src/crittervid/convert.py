@@ -11,10 +11,9 @@ import tempfile
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-import platform
 from . import log, media_format
 from .config import ACCEL_CHOICES, PipelineConfig
-from .ffmpeg import PATH_TEXT, get_ffmpeg_path, media_arg
+from .ffmpeg import ACCEL_OPTIONS, PATH_TEXT, detect_accel, get_ffmpeg_path, media_arg  # noqa: F401
 
 
 class Stopped(BaseException):
@@ -67,48 +66,6 @@ def stop_ffmpeg(cancel):
 
 
 # Hardware acceleration options for FFmpeg: (options before -i, options after -i)
-ACCEL_OPTIONS = {
-    'cpu': ([], []),
-    'cuda': (['-hwaccel', 'cuda'], ['-c:v', 'h264_nvenc']),
-    'qsv': (['-hwaccel', 'qsv'], ['-c:v', 'h264_qsv']),
-    'vaapi': (['-hwaccel', 'vaapi'], ['-c:v', 'h264_vaapi']),
-    'amf': (['-hwaccel', 'dxva2'], ['-c:v', 'h264_amf']),
-}
-
-def detect_accel():
-    # Try to auto-detect GPU type
-    try:
-        import GPUtil
-        gpus = GPUtil.getGPUs()
-        if gpus:
-            # NVIDIA
-            return 'cuda'
-    except ImportError:
-        pass
-    # Try to detect Intel QSV
-    if platform.system() == 'Windows':
-        try:
-            import wmi
-            c = wmi.WMI()
-            for gpu in c.Win32_VideoController():
-                if 'Intel' in gpu.Name:
-                    return 'qsv'
-        except ImportError:
-            pass
-    # Try to detect AMD (AMF)
-    try:
-        import wmi
-        c = wmi.WMI()
-        for gpu in c.Win32_VideoController():
-            if 'AMD' in gpu.Name:
-                return 'amf'
-    except ImportError:
-        pass
-    # Try to detect VAAPI (Linux)
-    if platform.system() == 'Linux':
-        return 'vaapi'
-    return 'cpu'
-
 # Recursively scan for .media files
 def find_media_files(root):
     for dirpath, _, filenames in os.walk(root):
@@ -294,16 +251,30 @@ def convert_media_file(media_path, summary, accel, failed_files, config):
         # A segment starts at the event's start plus its offset (its file name)
         offset = int(media_path.stem) if media_path.stem.isdigit() else 0
         output = media_format.creation_time_args(int(timestamp) + offset) + FALLBACK_OUTPUT
-        if config.copy:
-            cmd = [get_ffmpeg_path(), '-y', '-i', media_arg(media_path), '-c:v', 'copy'] + output + [media_arg(tmp_path)]
-            method = 'copy'
-        else:
+        if accel == 'auto' and not config.copy:
+            accel = _auto_accel()
+
+        def command(accel):
+            if config.copy:
+                return [get_ffmpeg_path(), '-y', '-i', media_arg(media_path), '-c:v', 'copy'] + output + [media_arg(tmp_path)]
             input_opts, output_opts = ACCEL_OPTIONS[accel]
-            cmd = [get_ffmpeg_path(), '-y'] + input_opts + ['-i', media_arg(media_path)] + output_opts + output + [media_arg(tmp_path)]
-            method = accel
+            return [get_ffmpeg_path(), '-y'] + input_opts + ['-i', media_arg(media_path)] + output_opts + output + [media_arg(tmp_path)]
+
+        method = 'copy' if config.copy else accel
         started = time.monotonic()
+        cmd = command(accel)
         _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(media_path)})
         result = run_ffmpeg(cmd, config.cancel)
+        if result.returncode != 0 and method not in ('copy', 'cpu'):
+            # The GPU or its driver failed on this file: the CPU can still do it
+            reason = log.ffmpeg_failure(result.stderr)[0]
+            say(f"WARNING: {media_path}: encoding with {accel} failed ({reason}); trying the CPU",
+                file=str(media_path))
+            tmp_path.unlink(missing_ok=True)
+            cmd = command('cpu')
+            _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(media_path)})
+            result = run_ffmpeg(cmd, config.cancel)
+            method = f'cpu, after {accel} failed'
         took = {'file': str(media_path), 'duration_s': round(time.monotonic() - started, 3)}
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
@@ -356,6 +327,18 @@ def group_by_event(paths):
     written by older versions)."""
     folders = {path if path.is_dir() else path.parent for path in paths}
     return {folder: sorted(folder.glob('*.media')) for folder in sorted(folders)}
+
+
+_auto_said = threading.Event()
+
+
+def _auto_accel():
+    """--accel auto's encoder (worked out once), said the first time it's used."""
+    accel = detect_accel()
+    if not _auto_said.is_set():
+        _auto_said.set()
+        say(f"Auto-detected acceleration: {accel}")
+    return accel
 
 
 def convert_event_parallel(args):
@@ -414,12 +397,12 @@ def run(config):
     accel = config.accel or 'auto'
     if config.copy:
         say("Using stream copy mode (--copy): will not re-encode video.")
+    elif accel == 'auto':
+        # Worked out when a file needs encoding: files in the cameras' record
+        # format are copied, so most runs never need to try the encoders
+        say("Using acceleration: auto (the first encoder that works, when a file needs encoding)")
     else:
-        if accel == 'auto':
-            accel = detect_accel()
-            say(f"Auto-detected acceleration: {accel}")
-        else:
-            say(f"Using acceleration: {accel}")
+        say(f"Using acceleration: {accel}")
         if accel not in ACCEL_OPTIONS:
             say(f"Unknown acceleration type: {accel}. Falling back to CPU.", level=logging.WARNING)
             accel = 'cpu'

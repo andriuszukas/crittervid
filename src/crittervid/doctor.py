@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import __version__, log
 from .config import PipelineConfig
-from .ffmpeg import encoder_works, get_ffmpeg_path, get_ffprobe_path, tool_version
+from .ffmpeg import ACCEL_ORDER, encoder_works, get_ffmpeg_path, get_ffprobe_path, tool_version
 
 _log = log.get('doctor')
 
@@ -81,7 +81,6 @@ def check_ffmpeg():
 
 def check_encoders():
     """Problems found (True if not even the CPU encoder works)."""
-    from .convert import detect_accel   # needs GPU detection, which may be slow to import
     working = []
     for accel, label in ACCELS.items():
         if accel == 'vaapi' and platform.system() != 'Linux':
@@ -93,18 +92,9 @@ def check_encoders():
         else:
             say(f'WARNING: encoder {label} not available (--accel {accel}): {reason}' if accel != 'cpu'
                 else f'ERROR: the CPU encoder {label} failed: {reason}')
-    try:
-        auto = detect_accel()
-    except Exception as e:   # GPU detection itself failing is worth knowing, not fatal
-        say(f'WARNING: Auto acceleration couldn\'t detect the GPU: {e!r}')
-        auto = None
-    if auto:
-        if auto in working:
-            say(f'OK: --accel auto picks {auto}, which works')
-        else:
-            say(f'WARNING: --accel auto picks {auto}, which doesn\'t work here; choose one that does '
-                f'({", ".join(working) or "none"}). Most cameras\' files are copied, not encoded, so this '
-                f'only matters for files that aren\'t in their record format.')
+    # What detect_accel would pick, from the tries above
+    auto = next((accel for accel in ACCEL_ORDER if accel in working), 'cpu')
+    say(f'OK: --accel auto picks {auto} (the first that works of {", ".join(ACCEL_ORDER)}, then the CPU)')
     return 'cpu' not in working
 
 

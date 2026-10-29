@@ -14,10 +14,6 @@ dependencies = []
 
 [project.optional-dependencies]
 gui = ["streamlit==1.50.0"]
-gpu = [
-    "GPUtil==1.4.0",
-    'WMI==1.5.1; sys_platform == "win32"',
-]
 dev = [
     "pyinstaller==6.11.1",
     "pytest==9.1.1",

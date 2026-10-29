@@ -41,7 +41,7 @@ The app only accepts connections from your own computer, and needs no internet c
    ```bash
    pip install -r requirements.txt
    ```
-   This installs the `crittervid` command (as an editable package, so changes in the folder take effect), Streamlit (the GUI) and GPUtil, plus WMI on Windows (both used by Auto GPU detection). The pipeline itself needs no other packages.
+   This installs the `crittervid` command (as an editable package, so changes in the folder take effect), and Streamlit (the GUI). The pipeline itself needs no other packages.
 
    To build the app or run the tests, install `requirements-dev.txt` instead. It adds PyInstaller and pytest:
    ```bash
@@ -136,7 +136,7 @@ Versions before 0.1.0 needed Python on `PATH` to run the pipeline from the packa
 - For a build, rebuild with `build.bat`.
 
 ### Slow processing
-- Choose your GPU under Hardware Acceleration instead of CPU or Auto.
+- Leave Hardware Acceleration on Auto, or choose your GPU, rather than CPU. `crittervid doctor` shows which encoders work.
 - Reduce the number of videos processed in parallel.
 - On the command line, `--copy` copies the video stream without re-encoding, which is much faster when the input is already H.264. It isn't available in the GUI.
 
