@@ -1413,7 +1413,7 @@ def test_a_failed_gpu_encode_is_done_again_on_the_cpu(ws):
     result = ws.run('convert_media.py', '--accel', 'cuda')
 
     assert result.returncode == 0, result.stdout
-    assert 'encoding with cuda failed (The encoder stopped working); trying the CPU' in result.stdout
+    assert 'failed with cuda (The encoder stopped working); trying the CPU' in result.stdout
     assert '[cpu, after cuda failed]' in result.stdout
     assert ws.converted('0001.media').read_bytes() == b'OKgood'
 
@@ -1424,3 +1424,30 @@ def test_vaapi_uploads_frames_to_its_device():
 
     assert input_opts == ['-vaapi_device', VAAPI_DEVICE]
     assert output_opts == ['-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi']
+
+
+
+def test_auto_uses_the_cpu_for_the_rest_after_its_gpu_fails_on_a_file(ws):
+    # The encoder works on the test clip but not on real files
+    for name in ('0001.media', '0002.media', '0003.media'):
+        ws.add_media(name, b'good')
+    ws.env['FAKE_FFMPEG_ENCODERS'] = 'libx264,h264_amf'
+    ws.env['FAKE_FFMPEG_FAIL_ENCODERS'] = 'h264_amf'
+
+    result = ws.run('convert_media.py', '--accel', 'auto', '--workers', '1')
+
+    assert result.returncode == 0, result.stdout
+    assert result.stdout.count('failed with amf') == 1   # only the first file tried it
+    assert 'Auto uses the CPU for the rest of this run' in result.stdout
+    assert result.stdout.count('[cpu]') == 2
+
+
+def test_a_file_the_cpu_cant_do_either_doesnt_turn_auto_off(ws):
+    ws.add_media('0001.media', b'BAD')    # bad for any encoder
+    ws.add_media('0002.media', b'good')
+    ws.env['FAKE_FFMPEG_ENCODERS'] = 'libx264,h264_amf'
+
+    result = ws.run('convert_media.py', '--accel', 'auto', '--workers', '1')
+
+    assert 'Auto uses the CPU' not in result.stdout
+    assert '[amf]' in result.stdout   # the good file still used the GPU

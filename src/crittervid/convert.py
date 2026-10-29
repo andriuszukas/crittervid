@@ -13,7 +13,7 @@ import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from . import log, media_format
 from .config import ACCEL_CHOICES, PipelineConfig
-from .ffmpeg import ACCEL_OPTIONS, PATH_TEXT, detect_accel, get_ffmpeg_path, media_arg  # noqa: F401
+from .ffmpeg import ACCEL_OPTIONS, PATH_TEXT, detect_accel, get_ffmpeg_path, media_arg
 
 
 class Stopped(BaseException):
@@ -251,7 +251,8 @@ def convert_media_file(media_path, summary, accel, failed_files, config):
         # A segment starts at the event's start plus its offset (its file name)
         offset = int(media_path.stem) if media_path.stem.isdigit() else 0
         output = media_format.creation_time_args(int(timestamp) + offset) + FALLBACK_OUTPUT
-        if accel == 'auto' and not config.copy:
+        chosen_by_auto = accel == 'auto' and not config.copy
+        if chosen_by_auto:
             accel = _auto_accel()
 
         def command(accel):
@@ -266,15 +267,19 @@ def convert_media_file(media_path, summary, accel, failed_files, config):
         _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(media_path)})
         result = run_ffmpeg(cmd, config.cancel)
         if result.returncode != 0 and method not in ('copy', 'cpu'):
-            # The GPU or its driver failed on this file: the CPU can still do it
+            # Maybe the GPU or its driver can't do this file, which the CPU can
             reason = log.ffmpeg_failure(result.stderr)[0]
-            say(f"WARNING: {media_path}: encoding with {accel} failed ({reason}); trying the CPU",
+            say(f"WARNING: {media_path}: failed with {accel} ({reason}); trying the CPU",
                 file=str(media_path))
             tmp_path.unlink(missing_ok=True)
             cmd = command('cpu')
             _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(media_path)})
             result = run_ffmpeg(cmd, config.cancel)
             method = f'cpu, after {accel} failed'
+            if result.returncode == 0 and chosen_by_auto:
+                # The CPU managed what the GPU didn't: it's the GPU, so Auto stops
+                # trying it, rather than failing on it once for every file
+                _auto_gpu_failed(accel)
         took = {'file': str(media_path), 'duration_s': round(time.monotonic() - started, 3)}
         if result.returncode != 0:
             tmp_path.unlink(missing_ok=True)
@@ -329,16 +334,30 @@ def group_by_event(paths):
     return {folder: sorted(folder.glob('*.media')) for folder in sorted(folders)}
 
 
-_auto_said = threading.Event()
+_auto_lock = threading.Lock()
+_auto_said = False
+_auto_cpu = False   # set once Auto's GPU failed on a file the CPU could do
 
 
 def _auto_accel():
     """--accel auto's encoder (worked out once), said the first time it's used."""
-    accel = detect_accel()
-    if not _auto_said.is_set():
-        _auto_said.set()
-        say(f"Auto-detected acceleration: {accel}")
+    global _auto_said
+    accel = 'cpu' if _auto_cpu else detect_accel()
+    with _auto_lock:
+        if not _auto_said:
+            _auto_said = True
+            say(f"Auto-detected acceleration: {accel}")
     return accel
+
+
+def _auto_gpu_failed(accel):
+    """Use the CPU for the rest of this run, after Auto's GPU encoder (accel)
+    failed on a file the CPU converted."""
+    global _auto_cpu
+    with _auto_lock:
+        if not _auto_cpu:
+            _auto_cpu = True
+            say(f"WARNING: {accel} failed on a file the CPU could convert; Auto uses the CPU for the rest of this run")
 
 
 def convert_event_parallel(args):
