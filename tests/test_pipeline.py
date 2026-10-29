@@ -1451,3 +1451,15 @@ def test_a_file_the_cpu_cant_do_either_doesnt_turn_auto_off(ws):
 
     assert 'Auto uses the CPU' not in result.stdout
     assert '[amf]' in result.stdout   # the good file still used the GPU
+
+
+def test_what_auto_learnt_doesnt_carry_over_to_the_next_run(monkeypatch, tmp_path):
+    from crittervid import convert
+    from crittervid.config import PipelineConfig
+    monkeypatch.setattr(convert, '_auto_cpu', True)
+    monkeypatch.setattr(convert, '_auto_said', True)
+    monkeypatch.setattr(convert, 'find_media_files', lambda root: [])
+
+    convert.run(PipelineConfig(input_dir=tmp_path / 'none', output_dir=tmp_path / 'out', accel='auto'))
+
+    assert convert._auto_cpu is False and convert._auto_said is False

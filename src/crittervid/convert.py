@@ -413,6 +413,9 @@ def run(config):
         print(message, file=sys.stderr)
         log.file_only(_log, logging.ERROR, message)
         return 2
+    global _auto_said, _auto_cpu
+    with _auto_lock:   # what Auto learnt in an earlier run in this process doesn't carry over
+        _auto_said = _auto_cpu = False
     accel = config.accel or 'auto'
     if config.copy:
         say("Using stream copy mode (--copy): will not re-encode video.")
