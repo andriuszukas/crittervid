@@ -1,6 +1,6 @@
 # 0005: Deployment details: time zone, clock offset, site and camera
 
-- **Status:** proposed
+- **Status:** accepted
 - **Issues:** #36 (deployment details), the remaining part of #8 (days grouped in the computer's time zone); it prepares #33's camera and deployment metadata, #32 (merged files mapped to real time), #34 (several cameras) and #73's clock correction
 
 ## Context
@@ -84,7 +84,7 @@ The card's folder dates are the camera's local dates. So for each event, the dat
 2. **Clock offset everywhere else:** `creation_time` and the logs' local times; the time zone in `doctor`, the summary and the run log; and leftover merged days reported after a change.
 3. **GUI and docs:** the four fields in the GUI, next to the output folder. They're filled from `deployment.json` when an output folder with one is chosen. The time zone is picked from a list of names, so a typo can't get through. The README's dependency notes and the DEPLOYMENT guide are updated.
 
-## Questions for you
+## Questions (answered: yes to all three)
 
 1. **Save the settings in `<output>/deployment.json` and reuse them?** Recommended. Every step on an output folder then agrees without retyping. The alternative is giving the options on every command.
 2. **Without a time zone, keep using the computer's, with a warning?** Recommended. Existing setups keep working. The alternative is refusing to merge until a time zone is set.
