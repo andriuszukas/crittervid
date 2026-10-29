@@ -87,7 +87,7 @@ def run(config, validate_output=True, dry_run=False):
             continue
         say(f"=== Step {number}: {step.title} ===")
         if dry_run:
-            say(f"[DRY RUN] Would run: crittervid {step.name} {' '.join(step.options(config))}")
+            say(f"[DRY RUN] Would run: {log.command_line(['crittervid', step.name, *step.options(config)])}")
             codes.append(0)
             continue
         if step.prepare:

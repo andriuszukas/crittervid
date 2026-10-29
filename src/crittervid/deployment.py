@@ -9,7 +9,8 @@ import json
 import os
 from dataclasses import replace
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from functools import lru_cache
+from zoneinfo import ZoneInfo, available_timezones
 
 from . import log
 
@@ -49,12 +50,18 @@ def options(config):
     return args
 
 
+@lru_cache(maxsize=1)
+def _names():
+    return available_timezones()
+
+
 def zone(name):
-    """The time zone called name, or Invalid."""
-    try:
-        return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError, OSError):
-        raise Invalid(f"unknown time zone '{name}': use an IANA name such as Europe/Vilnius or America/New_York") from None
+    """The time zone called name, or Invalid. Only the names of the time zone
+    data count: on Windows, ZoneInfo also accepts names that are the same file
+    there (such as with a trailing space), which other systems would reject."""
+    if name not in _names():
+        raise Invalid(f"unknown time zone '{name}': use an IANA name such as Europe/Vilnius or America/New_York")
+    return ZoneInfo(name)
 
 
 def path(config):
@@ -102,12 +109,19 @@ def write(config, values, set_times):
     so a run stopped halfway leaves the old file."""
     file = path(config)
     data = {'schema': SCHEMA, **{name: values.get(name) for name in FIELDS}, 'set': set_times}
-    config.output_dir.mkdir(parents=True, exist_ok=True)
     tmp = file.with_name(f'{FILE_NAME}.{os.getpid()}.tmp')
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write('\n')
-    os.replace(tmp, file)
+    try:
+        config.output_dir.mkdir(parents=True, exist_ok=True)
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write('\n')
+        os.replace(tmp, file)
+    except OSError as e:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise Invalid(f"the deployment details can't be saved in {file} ({e})") from None
 
 
 def _set_times(config):
@@ -155,7 +169,7 @@ def settle(config, save):
 
     def source(name):
         if name in given:
-            return 'option' if save or name not in saved or saved[name] == given[name] else 'option, not saved'
+            return 'option' if save or saved.get(name) == given[name] else 'option, not saved'
         return FILE_NAME
     if 'timezone' in values:
         log.say(_log, f"Time zone: {values['timezone']} ({source('timezone')})")

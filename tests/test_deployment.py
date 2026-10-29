@@ -64,8 +64,9 @@ def test_days_are_the_cameras_local_dates(tmp_path):
 
 
 def test_events_are_ordered_by_instant_in_the_repeated_hour(tmp_path):
-    first = tmp_path / '1792888200_0010.mp4'    # 01:30 BST
-    second = tmp_path / '1792891800_0010.mp4'   # 01:30 GMT, an hour later
+    # Folders ordered against the times, so a sort by clock time (then path) fails
+    first = tmp_path / 'b' / '1792888200_0010.mp4'    # 01:30 BST
+    second = tmp_path / 'a' / '1792891800_0010.mp4'   # 01:30 GMT, an hour later
 
     [(_, files)] = names.group_files_by_day([second, first], LONDON).items()
 
@@ -137,6 +138,7 @@ def test_a_dry_run_saves_nothing(ws):
 
     assert result.returncode == 0, result.stdout
     assert '--timezone UTC' in result.stdout   # forwarded to each step
+    assert 'Time zone: UTC (option, not saved)' in result.stdout
     assert not (ws.root / 'output' / 'deployment.json').exists()
 
 
@@ -170,6 +172,26 @@ def test_an_unknown_time_zone_stops_the_step_before_it_converts_anything(ws):
     assert result.returncode == 2, result.stdout
     assert "ERROR: unknown time zone 'Mars/Olympus_Mons'" in result.stdout
     assert ws.files('*.mp4') == [] and not (ws.root / 'output' / 'deployment.json').exists()
+
+
+def test_a_time_zone_name_must_be_exact():
+    from crittervid import deployment
+    for name in ('Europe/London ', 'europe/london', '', '../UTC'):
+        with pytest.raises(deployment.Invalid):
+            deployment.zone(name)
+
+
+def test_deployment_details_that_cant_be_saved_stop_the_run(ws):
+    ws.add_media('0001.media', b'morning')
+    (ws.root / 'output').mkdir()
+    (ws.root / 'output' / 'deployment.json').mkdir()   # a folder where the file goes
+
+    result = ws.run('convert_media.py', '--accel', 'cpu')
+
+    assert result.returncode == 2, result.stdout
+    assert "ERROR: " in result.stdout and 'deployment.json' in result.stdout
+    assert 'Traceback' not in result.stdout + result.stderr
+    assert list((ws.root / 'output').glob('*.tmp')) == []
 
 
 @pytest.mark.parametrize('content, problem', [

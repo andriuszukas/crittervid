@@ -106,7 +106,9 @@ def split_day(day_start, files, n, tz=None):
 
 def _name_time(t):
     """A time in a merged file's name: its clock time, plus its UTC offset when
-    that clock time happens twice (the hour repeated when the clocks go back)."""
+    that clock time happens twice (the hour repeated when the clocks go back).
+    In the computer's time zone (a fixed offset per time) that can't be told,
+    so the offset is left out; the part number still keeps names apart."""
     other = t.replace(fold=1 - t.fold)
     repeated = t.tzinfo is not None and other.utcoffset() != t.utcoffset()
     return f"{t:%Y%m%d_%H%M}{t:%z}" if repeated else f"{t:%Y%m%d_%H%M}"
