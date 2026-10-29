@@ -58,6 +58,7 @@ a = Analysis(
         'crittervid.merge',
         'crittervid.validate',
         'crittervid.gui.launch',
+        'crittervid.doctor',
         'streamlit',
         'streamlit.runtime.scriptrunner.magic_funcs',
         'streamlit.web.cli',

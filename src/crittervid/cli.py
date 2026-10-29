@@ -5,6 +5,7 @@
     crittervid merge     converted files into days
     crittervid validate  check the outputs
     crittervid gui       the graphical interface (also what no command opens)
+    crittervid doctor    check FFmpeg, the encoders, the output folder and disk space
 
 Each command has its own options; `crittervid <command> --help` lists them.
 """
@@ -21,6 +22,7 @@ COMMANDS = {
     'run': 'crittervid.pipeline',
     **{step.name: step.module for step in STEPS},
     'gui': 'crittervid.gui.launch',
+    'doctor': 'crittervid.doctor',
 }
 
 
