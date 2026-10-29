@@ -11,7 +11,8 @@ import tempfile
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from . import log, media_format
+from datetime import date
+from . import deployment, log, media_format, names
 from .config import ACCEL_CHOICES, PipelineConfig
 from .ffmpeg import ACCEL_OPTIONS, PATH_TEXT, detect_accel, get_ffmpeg_path, media_arg
 
@@ -381,6 +382,38 @@ def convert_event_parallel(args):
                               f"so its real time is unknown; it won't be merged with dated days")
     return local_summary, local_failed, success
 
+CARD_DAY = (4, 2, 2)   # the lengths of a card's YYYY/MM/DD folder names
+
+
+def check_card_dates(event_dirs, config):
+    """Warn when the time zone puts events on other days than the card does.
+
+    The camera files each event under its own local date (DCIM/YYYY/MM/DD/<event>),
+    so in the right time zone an event's start, by the camera's clock, falls on
+    that date. Events whose clock wasn't set, and folders without dates above
+    them, aren't checked."""
+    checked, other = 0, []
+    for event_dir in sorted(event_dirs):
+        days = event_dir.parent.parts[-3:]
+        if (not EVENT_FOLDER.fullmatch(event_dir.name) or tuple(map(len, days)) != CARD_DAY
+                or not all(part.isdigit() for part in days)):
+            continue
+        seconds = int(event_dir.name.split('_')[0])
+        if not media_format.clock_was_set(seconds):
+            continue
+        try:
+            card_day = date(*map(int, days))
+        except ValueError:
+            continue
+        checked += 1
+        if names.local_time(seconds, config.tz).date() != card_day:   # the camera's own time
+            other.append(event_dir)
+    if other:
+        where = config.timezone or "this computer's time zone"
+        say(f"WARNING: {len(other)} of {checked} events fall on a different day in {where} than on the "
+            f"card (e.g. {other[0]}); is the time zone right? Give the camera's with --timezone")
+
+
 def main(argv=None):
     log.setup_streams()   # UTF-8 on the console, also for option errors
     parser = argparse.ArgumentParser(prog='crittervid convert', description="Convert .media files to .mp4 with optional hardware acceleration.")
@@ -391,6 +424,7 @@ def main(argv=None):
     parser.add_argument('--copy', action='store_true', help='Copy video stream without re-encoding (fast, requires compatible input)')
     parser.add_argument('--retry-failed', action='store_true', help='Retry only files that failed in previous run')
     parser.add_argument('--max-retries', type=int, default=3, help='Maximum number of retry attempts for failed files (default: 3)')
+    deployment.add_options(parser)
     parser.add_argument('--verbose', action='store_true', help='Also show details on the console (they are always in the logs).')
     args = parser.parse_args(argv)
     # On Windows, Ctrl+Break (how a program stops a console child) stops the run
@@ -399,7 +433,8 @@ def main(argv=None):
         signal.signal(signal.SIGBREAK, signal.default_int_handler)
     config = PipelineConfig(input_dir=args.input_dir, output_dir=args.output_dir, accel=args.accel,
                             workers=args.workers, copy=args.copy, retry_failed=args.retry_failed,
-                            max_retries=args.max_retries)
+                            max_retries=args.max_retries, timezone=args.timezone,
+                            clock_offset=args.clock_offset, site=args.site, camera=args.camera)
     log.start_run(config, 'convert', verbose=args.verbose)
     return run(config)
 
@@ -412,6 +447,11 @@ def run(config):
         message = 'crittervid convert: error: --workers and --max-retries must be at least 1'
         print(message, file=sys.stderr)
         log.file_only(_log, logging.ERROR, message)
+        return 2
+    try:
+        config = deployment.settle(config, save=True)
+    except deployment.Invalid as e:
+        say(f"ERROR: {e}")
         return 2
     global _auto_said, _auto_cpu
     with _auto_lock:   # what Auto learnt in an earlier run in this process doesn't carry over
@@ -438,6 +478,7 @@ def run(config):
     else:
         media_files = list(find_media_files(config.input_dir))
         say(f"Found {len(media_files)} .media files to process.")
+    check_card_dates({path.parent for path in media_files}, config)
 
     summary = []
     failed_files = []

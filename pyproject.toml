@@ -9,8 +9,9 @@ description = "Converts camera-trap SD cards into MP4 files, merges them into da
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
-# The pipeline needs only the standard library (and FFmpeg)
-dependencies = []
+# The pipeline needs only the standard library (and FFmpeg), plus the time zone
+# data, which Windows and some containers don't have (decision record 0005)
+dependencies = ["tzdata>=2025.2"]   # a floor, not a pin: newer data has the latest rules
 
 [project.optional-dependencies]
 gui = ["streamlit==1.50.0"]

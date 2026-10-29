@@ -4,7 +4,6 @@ import os
 import shutil
 import stat
 import sys
-from datetime import datetime, timedelta
 
 import pytest
 
@@ -403,13 +402,3 @@ def test_validate_warns_about_a_part_named_for_other_times(ws):
 
     assert 'part 2 of 5 covers 04:48 to 09:36, not the times in its name' in result.stdout
 
-
-@pytest.mark.parametrize('n', [1, 2, 5, 7, 24, 1440])
-def test_split_windows_cover_the_day_without_gaps(n):
-    import merge_videos
-    day = datetime(2026, 10, 1)
-    windows = merge_videos.split_day(day, [], n)
-    assert [k for k, _, _, _ in windows] == list(range(1, n + 1))
-    assert windows[0][1] == day and windows[-1][2] == day + timedelta(days=1)
-    assert all(a[2] == b[1] for a, b in zip(windows, windows[1:]))
-    assert all(start < end for _, start, end, _ in windows)

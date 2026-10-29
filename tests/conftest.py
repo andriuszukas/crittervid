@@ -20,8 +20,8 @@ COMMANDS = {'convert_media.py': 'convert', 'merge_videos.py': 'merge', 'validate
             'process_all.py': 'run'}
 
 # Matches the camera layout: DCIM/YYYY/MM/DD/<unixtimestamp>_<duration>/
-GROUP_DIR = Path('input/DCIM/2026/10/01/1759300000_0001')
-AFTERNOON_DIR = Path('input/DCIM/2026/10/01/1759330000_0001')
+GROUP_DIR = Path('input/DCIM/2025/10/01/1759300000_0001')
+AFTERNOON_DIR = Path('input/DCIM/2025/10/01/1759330000_0001')
 
 
 class Workspace:
@@ -30,6 +30,9 @@ class Workspace:
     def __init__(self, root, env):
         self.root = root
         self.env = env
+        # The test cameras' time zone, which the steps get as --timezone (decision
+        # record 0005); None gives none, as for a camera whose time zone isn't known
+        self.camera_timezone = 'UTC'
 
     def add_media(self, name, content):
         path = self.root / GROUP_DIR / name
@@ -67,6 +70,8 @@ class Workspace:
         """The command line for a pipeline step, named by its old script: the
         crittervid command for the steps, the script itself otherwise."""
         if script in COMMANDS:
+            if self.camera_timezone and '--help' not in args:
+                args = ('--timezone', self.camera_timezone, *args)
             return [sys.executable, '-m', 'crittervid', COMMANDS[script], *args]
         return [sys.executable, script, *args]
 
@@ -92,7 +97,7 @@ def make_workspace(tmp_path, path_prefix=None):
     # buffering and encoding bugs the tests are meant to catch
     for var in ('PYTHONUNBUFFERED', 'PYTHONUTF8', 'PYTHONIOENCODING'):
         env.pop(var, None)
-    # Day grouping uses the machine's local time; fix it so tests don't depend on it
+    # The computer's time zone, for tests that don't give the camera's
     env['TZ'] = 'UTC0'
     # `python -m crittervid` finds this copy of the package, not the checkout's
     env['PYTHONPATH'] = os.pathsep.join([str(app / 'src')] + [p for p in env.get('PYTHONPATH', '').split(os.pathsep) if p])

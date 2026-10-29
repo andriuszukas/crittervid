@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from . import deployment
+
 
 @dataclass(frozen=True)
 class Step:
@@ -39,7 +41,7 @@ def _convert_options(config):
         args.append('--copy')
     if config.retry_failed:
         args.append('--retry-failed')
-    return args + ['--max-retries', str(config.max_retries)]
+    return args + ['--max-retries', str(config.max_retries)] + deployment.options(config)
 
 
 def _convert_summary(config, ran, dry_run):
@@ -50,7 +52,7 @@ def _convert_summary(config, ran, dry_run):
 
 def _merge_options(config):
     args = ['--output-dir', str(config.output_dir), '--splits-per-day', str(config.splits_per_day)]
-    return args + (['--force'] if config.force_merge else [])
+    return args + (['--force'] if config.force_merge else []) + deployment.options(config)
 
 
 def _merge_prepare(config):
@@ -80,7 +82,7 @@ def _validate_options(config):
     args = ['--output-dir', str(config.output_dir), '--workers', str(config.workers)]
     if config.deep_validate:
         args.append('--deep')
-    return args + (['--accel', config.accel] if config.accel else [])
+    return args + (['--accel', config.accel] if config.accel else []) + deployment.options(config)
 
 
 def _validate_summary(config, ran, dry_run):

@@ -779,7 +779,7 @@ def test_merging_again_removes_a_part_whose_window_is_now_empty(ws):
 
 def test_an_event_length_of_any_number_of_digits_is_converted_and_merged(ws):
     ws.add_media('0001.media', b'four')
-    short = ws.root / 'input' / 'DCIM' / '2026' / '10' / '01' / '1759330000_60'
+    short = ws.root / 'input' / 'DCIM' / '2025' / '10' / '01' / '1759330000_60'
     short.mkdir(parents=True)
     (short / '0000.media').write_bytes(b'two')
 
@@ -1005,7 +1005,8 @@ def test_a_steps_options_describe_its_part_of_the_config(step, monkeypatch, tmp_
     from crittervid.config import PipelineConfig
     config = PipelineConfig(input_dir='in', output_dir='out', accel='cpu', workers=3, copy=True,
                             retry_failed=True, max_retries=5, splits_per_day=4, force_merge=True,
-                            deep_validate=True)
+                            deep_validate=True, timezone='Europe/Vilnius', clock_offset=-75, site='Pond',
+                            camera='C1')
     monkeypatch.chdir(tmp_path)   # main() logs its run, into ./out/logs here
     seen = []
     module = {'convert': convert, 'merge': merge, 'validate': validate}[step]
@@ -1017,6 +1018,7 @@ def test_a_steps_options_describe_its_part_of_the_config(step, monkeypatch, tmp_
     fields = {'convert': ['input_dir', 'output_dir', 'accel', 'workers', 'copy', 'retry_failed', 'max_retries'],
               'merge': ['output_dir', 'splits_per_day', 'force_merge'],
               'validate': ['output_dir', 'workers', 'deep_validate', 'accel']}[step]
+    fields += ['timezone', 'clock_offset', 'site', 'camera']
     assert {f: getattr(seen[0], f) for f in fields} == {f: getattr(config, f) for f in fields}
 
 
@@ -1031,7 +1033,8 @@ def test_every_step_of_a_run_shares_one_config_and_cancel_token(monkeypatch, tmp
     assert pipeline.run(config) == 0
 
     assert [name for name, _ in seen] == ['crittervid.convert', 'crittervid.merge', 'crittervid.validate']
-    assert all(c is config for _, c in seen)
+    # The config with its deployment details settled, once for every step
+    assert all(c is seen[0][1] and c.cancel is config.cancel for _, c in seen)
 
 
 @pytest.mark.parametrize('cancelled', [False, True])

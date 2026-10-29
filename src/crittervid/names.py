@@ -11,7 +11,8 @@ from . import media_format
 # (the cameras write 4-digit lengths, but any length is accepted)
 FILENAME_RE = re.compile(r'(?:^|[\\/])(\d{10,})_(\d+)(?:_\d+)?\.mp4$')
 # Names of the files this step writes: merged_<start>_<end>[_part<K>of<N>].mp4
-MERGED_NAME = re.compile(r'merged_\d{8}_\d{4}_\d{8}_\d{4}(?:_part(\d+)of(\d+))?\.mp4')
+# (with a time's UTC offset, such as +0300, when the clocks went back then)
+MERGED_NAME = re.compile(r'merged_\d{8}_\d{4}(?:[+-]\d{4})?_\d{8}_\d{4}(?:[+-]\d{4})?(?:_part(\d+)of(\d+))?\.mp4')
 
 def file_start(path):
     """When a converted file's footage starts, in Unix seconds, from its name: the
@@ -40,8 +41,33 @@ UNSET_CLOCK_MERGES = ("holds merged files an earlier version made from events re
                       "camera's clock was set; they mix events whose real time is unknown and can be deleted")
 
 
-# Group files by day
-def group_files_by_day(files):
+def local_time(seconds, tz=None):
+    """Unix seconds as an aware time in tz, or in the computer's time zone for None."""
+    if tz is None:
+        return datetime.fromtimestamp(seconds).astimezone()
+    return datetime.fromtimestamp(seconds, tz)
+
+
+def midnight(day, tz=None):
+    """The start of a date (a date or datetime) in tz, or in the computer's time
+    zone for None, as an aware time."""
+    naive = datetime(day.year, day.month, day.day)
+    return naive.astimezone() if tz is None else naive.replace(tzinfo=tz)
+
+
+def event_time(seconds, tz=None, offset=0):
+    """When an event (or a file of one) whose camera time is seconds started, in
+    tz: with the clock offset added, for a camera whose clock was set."""
+    if media_format.clock_was_set(seconds):   # decided on the camera's own time
+        seconds += offset
+    return local_time(seconds, tz)
+
+
+def group_files_by_day(files, tz=None, offset=0):
+    """{day: [(start, file)]} for converted files of events whose clock was set,
+    each day being its local midnight in tz (None: the computer's time zone) and
+    each start the event's time with the clock offset, both aware; sorted by
+    start."""
     # An event converted as one file (<event>.mp4) supersedes per-segment files left
     # in its <event>/ folder by older versions; merging both would repeat footage
     events = {f.stem for f in files if FILENAME_RE.search(str(f)) and f.stem.count('_') == 1}
@@ -50,29 +76,42 @@ def group_files_by_day(files):
         m = FILENAME_RE.search(str(f))
         if not m or f.parent.name in events or not media_format.clock_was_set(int(m.group(1))):
             continue
-        timestamp = m.group(1)
-        dt = datetime.fromtimestamp(int(timestamp))
-        day_start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-        key = day_start
-        groups.setdefault(key, []).append((dt, f))
-    # Sort files in each group by time
+        dt = event_time(int(m.group(1)), tz, offset)
+        groups.setdefault(midnight(dt, tz), []).append((dt, f))
+    # Sort by instant: two times in the hour repeated when the clocks go back
+    # would otherwise be ordered by their clock time
     for k in groups:
-        groups[k].sort()
+        groups[k].sort(key=lambda item: (item[0].timestamp(), str(item[1])))
     return groups
 
 MINUTES_PER_DAY = 24 * 60
 
 
-def split_day(day_start, files, n):
-    """How --splits-per-day n divides a day: into n equal time windows (to the
-    minute), part k holding the files whose event starts in its window, however
-    long the event runs. Returns [(k, window start, window end, files)] for
-    k = 1..n; a window with no events has no files."""
-    bounds = [day_start + timedelta(minutes=k * MINUTES_PER_DAY // n) for k in range(n + 1)]
-    return [(k + 1, bounds[k], bounds[k + 1], [(dt, f) for dt, f in files if bounds[k] <= dt < bounds[k + 1]])
+def split_day(day_start, files, n, tz=None):
+    """How --splits-per-day n divides a day (from day_start, a local midnight in
+    tz, to the next): into n equal time windows (to the minute) of its real
+    length, which is 23 or 25 hours on the days the clocks change. Part k holds
+    the files whose event starts in its window, however long the event runs.
+    Returns [(k, window start, window end, files)] for k = 1..n, with aware
+    times; a window with no events has no files (as an empty one has, when a
+    23-hour day is split into more parts than it has minutes)."""
+    start = day_start.timestamp()
+    end = midnight(day_start.date() + timedelta(days=1), tz).timestamp()
+    minutes = round(end - start) // 60
+    bounds = [start + 60 * (k * minutes // n) for k in range(n + 1)]
+    return [(k + 1, local_time(bounds[k], tz), local_time(bounds[k + 1], tz),
+             [(dt, f) for dt, f in files if bounds[k] <= dt.timestamp() < bounds[k + 1]])
             for k in range(n)]
+
+
+def _name_time(t):
+    """A time in a merged file's name: its clock time, plus its UTC offset when
+    that clock time happens twice (the hour repeated when the clocks go back)."""
+    other = t.replace(fold=1 - t.fold)
+    repeated = t.tzinfo is not None and other.utcoffset() != t.utcoffset()
+    return f"{t:%Y%m%d_%H%M}{t:%z}" if repeated else f"{t:%Y%m%d_%H%M}"
 
 
 def part_name(start, end, k, n):
     """The merged file for part k of n, covering start to end."""
-    return f"merged_{start:%Y%m%d_%H%M}_{end:%Y%m%d_%H%M}_part{k}of{n}.mp4"
+    return f"merged_{_name_time(start)}_{_name_time(end)}_part{k}of{n}.mp4"
