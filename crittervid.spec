@@ -16,6 +16,9 @@ datas += copy_metadata('numpy')
 # Collect streamlit data files
 datas += collect_data_files('streamlit')
 
+# The time zone data: Windows has none of its own (decision record 0005)
+datas += collect_data_files('tzdata')
+
 # The Streamlit app is run from its file, so it ships as one, next to the
 # crittervid.gui modules (the rest of the package is compiled into the app)
 datas += [
@@ -59,6 +62,8 @@ a = Analysis(
         'crittervid.validate',
         'crittervid.gui.launch',
         'crittervid.doctor',
+        # zoneinfo finds the time zone data by importing tzdata's packages by name
+        'tzdata',
         'streamlit',
         'streamlit.runtime.scriptrunner.magic_funcs',
         'streamlit.web.cli',

@@ -8,6 +8,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 ACCEL_CHOICES = ('cpu', 'cuda', 'qsv', 'vaapi', 'amf', 'auto')
 
@@ -45,12 +46,24 @@ class PipelineConfig:
     splits_per_day: int = 1
     force_merge: bool = False
     deep_validate: bool = False
+    # Deployment details (crittervid.deployment): None when not given, which
+    # settling fills from <output>/deployment.json
+    timezone: Optional[str] = None   # an IANA name; None after settling: the computer's
+    clock_offset: Optional[int] = None   # seconds added to times of events whose clock was set
+    site: Optional[str] = None
+    camera: Optional[str] = None
+    deployment_settled: bool = field(default=False, compare=False, repr=False)
     cancel: CancelToken = field(default_factory=CancelToken, compare=False, repr=False)
 
     def __post_init__(self):
         # Accept strings for the folders, as the command line gives them
         object.__setattr__(self, 'input_dir', Path(self.input_dir))
         object.__setattr__(self, 'output_dir', Path(self.output_dir))
+
+    @property
+    def tz(self):
+        """The camera's time zone, or None for the computer's."""
+        return ZoneInfo(self.timezone) if self.timezone else None
 
     @property
     def conversion_summary(self):

@@ -22,7 +22,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import log, names
+from . import deployment, log, names
 from .config import ACCEL_CHOICES, PipelineConfig
 from .ffmpeg import get_ffmpeg_path, get_ffprobe_path, media_arg
 
@@ -196,7 +196,7 @@ def check_merged_days(converted, merged, probes, config):
             found[path.parent.relative_to(config.merged_dir).as_posix()].append(path)
 
     problems = []
-    for day_start, files in sorted(names.group_files_by_day(converted).items()):
+    for day_start, files in sorted(names.group_files_by_day(converted, config.tz, config.clock_offset or 0).items()):
         day = day_start.strftime('%Y/%m/%d')
         parts = found.pop(day, [])
         dated, files = files, [f for _, f in files]
@@ -219,7 +219,7 @@ def check_merged_days(converted, merged, probes, config):
                 [(_, part)] = set_parts.items()
                 problems += check_merged_part(f'merged {day}', part, [probes[f] for f in files], probes)
                 continue
-            for k, start, end, chunk in names.split_day(day_start, dated, n):
+            for k, start, end, chunk in names.split_day(day_start, dated, n, config.tz):
                 chunk = [f for _, f in chunk]
                 part = set_parts.get(k)
                 if chunk and part is None:
@@ -251,11 +251,13 @@ def main(argv=None):
                         help='Also decode every file in full, to check FFmpeg can get through each one (slow: about as long as the footage)')
     parser.add_argument('--accel', choices=ACCEL_CHOICES, default=None,
                         help='Hardware decoding for --deep (default: none); files that fail are retried on the CPU')
+    deployment.add_options(parser)
     parser.add_argument('--verbose', action='store_true', help='Also show details on the console (they are always in the logs).')
     args = parser.parse_args(argv)
 
     config = PipelineConfig(output_dir=args.output_dir, workers=args.workers, deep_validate=args.deep,
-                            accel=args.accel)
+                            accel=args.accel, timezone=args.timezone, clock_offset=args.clock_offset,
+                            site=args.site, camera=args.camera)
     log.start_run(config, 'validate', verbose=args.verbose, run_log=False)   # it only reads the output folder
     return run(config)
 
@@ -271,6 +273,12 @@ def run(config):
     if not config.output_dir.is_dir():
         say(f'ERROR: output folder not found: {config.output_dir}')
         return 1
+    # It only reads the output folder, so options given here aren't saved
+    try:
+        config = deployment.settle(config, save=False)
+    except deployment.Invalid as e:
+        say(f"ERROR: {e}")
+        return 2
 
     converted, merged = output_files(config)
     if not converted and not merged:

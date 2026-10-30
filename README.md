@@ -46,7 +46,7 @@ installed, see [#4](https://github.com/andriuszukas/crittervid/issues/4)).
   pip install -r requirements.txt
   ```
   This installs the `crittervid` command and the GUI. The pipeline itself
-  needs no other packages. To build the app or run the tests, install `requirements-dev.txt` instead.
+  needs only `tzdata`, the time zone data (Windows has none of its own). To build the app or run the tests, install `requirements-dev.txt` instead.
 
 ## Input layout
 

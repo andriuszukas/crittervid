@@ -3,7 +3,7 @@ import argparse
 import logging
 import os
 
-from . import log, steps
+from . import deployment, log, steps
 from .config import ACCEL_CHOICES, PipelineConfig
 
 
@@ -53,6 +53,7 @@ def main(argv=None):
                         'that are already up to date (forwarded to merge_videos.py as --force).')
     parser.add_argument('--splits-per-day', type=int, default=None, help='Number of equal time windows to divide each day into, one merged file per window with '
                              'events (1 to 1440; forwarded to merge_videos.py).')
+    deployment.add_options(parser)
     parser.set_defaults(validate=True)
     parser.add_argument('--verbose', action='store_true', help='Also show details on the console (they are always in the logs).')
     args = parser.parse_args(argv)
@@ -61,7 +62,9 @@ def main(argv=None):
                             workers=4 if args.workers is None else args.workers, copy=args.copy,
                             retry_failed=args.retry_failed, max_retries=args.max_retries,
                             splits_per_day=1 if args.splits_per_day is None else args.splits_per_day,
-                            force_merge=args.force_merge, deep_validate=args.deep_validate)
+                            force_merge=args.force_merge, deep_validate=args.deep_validate,
+                            timezone=args.timezone, clock_offset=args.clock_offset, site=args.site,
+                            camera=args.camera)
     log.start_run(config, 'run', verbose=args.verbose, run_log=not args.dry_run)
     return run(config, validate_output=args.validate, dry_run=args.dry_run)
 
@@ -69,6 +72,12 @@ def main(argv=None):
 def run(config, validate_output=True, dry_run=False):
     """Run the steps (crittervid.steps.STEPS) in order, in this process, with one
     cancel token for all of them. A stop between steps ends the run."""
+    # Worked out once for the whole run, and saved unless it's a dry run
+    try:
+        config = deployment.settle(config, save=not dry_run)
+    except deployment.Invalid as e:
+        say(f"ERROR: {e}")
+        return 2
     choices = {'validate': validate_output}
     codes, ran = [], {}
     for number, step in enumerate(steps.STEPS, 1):
@@ -78,7 +87,7 @@ def run(config, validate_output=True, dry_run=False):
             continue
         say(f"=== Step {number}: {step.title} ===")
         if dry_run:
-            say(f"[DRY RUN] Would run: crittervid {step.name} {' '.join(step.options(config))}")
+            say(f"[DRY RUN] Would run: {log.command_line(['crittervid', step.name, *step.options(config)])}")
             codes.append(0)
             continue
         if step.prepare:

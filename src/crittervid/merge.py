@@ -9,7 +9,7 @@ import re
 import argparse
 import sys
 import time
-from . import log, media_format
+from . import deployment, log, media_format
 from .config import PipelineConfig
 from .ffmpeg import PATH_TEXT, get_ffmpeg_path, get_ffprobe_path, media_arg
 from .names import (FILENAME_RE, MERGED_NAME, MINUTES_PER_DAY, UNSET_CLOCK_MERGES, file_start,  # noqa: F401
@@ -66,7 +66,6 @@ def up_to_date(out_path, sources, files, record):
 def merge_group(start, end, files, summary, record, k, n, config):
     out_dir = config.merged_dir / start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
-    start_str = start.strftime('%Y%m%d_%H%M')
     out_name = part_name(start, end, k, n)
     out_path = out_dir / out_name
     sources = [source_name(f, config) for _, f in files]
@@ -79,7 +78,7 @@ def merge_group(start, end, files, summary, record, k, n, config):
     # a broken file that looks like a finished one
     tmp_path = out_dir / (out_name + '.part')
     # Create filelist.txt for ffmpeg concat
-    filelist_path = out_dir / f"filelist_{start_str}.txt"
+    filelist_path = out_dir / f"filelist_{out_path.stem}.txt"
     # The list has one path per line, so a path with a line break can't be in it
     broken = [file for _, file in files if '\n' in str(file) or '\r' in str(file)]
     if broken:
@@ -250,11 +249,13 @@ def main(argv=None):
     parser.add_argument('--force', action='store_true', help='Merge every part again, including ones that are '
                         'already up to date (by default they are skipped), e.g. after upgrading to a '
                         'version that merges differently.')
+    deployment.add_options(parser)
     parser.add_argument('--verbose', action='store_true', help='Also show details on the console (they are always in the logs).')
     args = parser.parse_args(argv)
 
     # Update global paths based on arguments
-    config = PipelineConfig(output_dir=args.output_dir, splits_per_day=args.splits_per_day, force_merge=args.force)
+    config = PipelineConfig(output_dir=args.output_dir, splits_per_day=args.splits_per_day, force_merge=args.force,
+                            timezone=args.timezone, clock_offset=args.clock_offset, site=args.site, camera=args.camera)
     log.start_run(config, 'merge', verbose=args.verbose)
     return run(config)
 
@@ -267,9 +268,14 @@ def run(config):
         print(message, file=sys.stderr)
         log.file_only(_log, logging.ERROR, message)
         return 2
+    try:
+        config = deployment.settle(config, save=True)
+    except deployment.Invalid as e:
+        say(f"ERROR: {e}")
+        return 2
 
     mp4_files = list(find_mp4_files(config.output_dir))
-    groups = group_files_by_day(mp4_files)
+    groups = group_files_by_day(mp4_files, config.tz, config.clock_offset or 0)
     summary = []
     failed = 0
     def warn(msg):
@@ -301,7 +307,7 @@ def run(config):
         day_dir = config.merged_dir / day_start.strftime('%Y/%m/%d')
         record = read_contents(day_dir)
         written, day_failed = set(), False
-        for k, start, end, split_files in split_day(day_start, files, n):
+        for k, start, end, split_files in split_day(day_start, files, n, config.tz):
             if not split_files:
                 continue
             out_path = merge_group(start, end, split_files, summary, record, k, n, config)
