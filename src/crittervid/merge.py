@@ -50,26 +50,29 @@ def video_end(path):
         return None
 
 
-def up_to_date(out_path, sources, files, record):
+def up_to_date(out_path, sources, files, record, offsets, offset):
     """Whether a merged file already holds exactly these converted files: the
-    record says it was made from them, and each is older than it. Strictly: some
+    record says it was made from them, with this clock offset (which sets its
+    creation_time), and each is older than it. Strictly: some
     drives keep times to only 2 s, so a file converted again just before the merge
     can show the same time; a tie costs at most a needless merge, never a stale
     file. A file replaced by hand isn't noticed."""
     try:
         made = out_path.stat().st_mtime
-        return record.get(out_path.name) == sources and all(f.stat().st_mtime < made for _, f in files)
+        return (record.get(out_path.name) == sources and offsets.get(out_path.name, 0) == offset
+                and all(f.stat().st_mtime < made for _, f in files))
     except OSError:
         return False
 
 
-def merge_group(start, end, files, summary, record, k, n, config):
+def merge_group(start, end, files, summary, record, offsets, k, n, config):
     out_dir = config.merged_dir / start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
     out_name = part_name(start, end, k, n)
     out_path = out_dir / out_name
     sources = [source_name(f, config) for _, f in files]
-    if not config.force_merge and up_to_date(out_path, sources, files, record):
+    offset = config.clock_offset or 0
+    if not config.force_merge and up_to_date(out_path, sources, files, record, offsets, offset):
         msg = f"SKIPPED: {out_path} is up to date ({len(files)} files)"
         say(msg, file=str(out_path))
         summary.append(msg)
@@ -105,7 +108,7 @@ def merge_group(start, end, files, summary, record, k, n, config):
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
     cmd = [get_ffmpeg_path(), '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac',
-           *media_format.creation_time_args(file_start(files[0][1])), '-f', 'mp4', media_arg(tmp_path)]
+           *media_format.creation_time_args(file_start(files[0][1]), offset), '-f', 'mp4', media_arg(tmp_path)]
     started = time.monotonic()
     _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(out_path)})
     result = subprocess.run(cmd, capture_output=True)
@@ -122,8 +125,17 @@ def merge_group(start, end, files, summary, record, k, n, config):
     # with what the old one held: whenever the run stops, the record lists at
     # least what the file holds, which only ever keeps a file that could have
     # been deleted, never the other way round
-    previous = record.get(out_name)
+    previous, previous_offset = record.get(out_name), offsets.get(out_name)
     record[out_name] = sorted(set(previous or []) | set(sources))
+    # The offset is recorded once the new file is in place: until then a stop
+    # leaves the old file, and an offset it wasn't made with could pass it as
+    # up to date
+
+    def restore():
+        if previous is None:
+            record.pop(out_name)
+        else:
+            record[out_name] = previous
 
     def fail(reason):
         tmp_path.unlink(missing_ok=True)
@@ -132,24 +144,19 @@ def merge_group(start, end, files, summary, record, k, n, config):
         summary.append(f"ERROR: {error_msg}")
         return False
 
-    if not write_contents(out_dir, record, summary):
-        if previous is None:
-            record.pop(out_name)
-        else:
-            record[out_name] = previous
+    if not write_contents(out_dir, record, summary, offsets):
+        restore()
         return fail("couldn't record its contents")
     try:
         tmp_path.replace(out_path)
     except OSError as e:   # e.g. the old file is open in a video player
         # The old file stays, so describe it again: its record mustn't claim the
         # new events, or a later run could take it for up to date
-        if previous is None:
-            record.pop(out_name)
-        else:
-            record[out_name] = previous
-        write_contents(out_dir, record, summary)
+        restore()
+        write_contents(out_dir, record, summary, offsets)
         return fail(f"couldn't replace the earlier file: {e}")
     record[out_name] = sources   # written with the day's other changes
+    offsets[out_name] = offset
     success_msg = f"Merged {len(files)} files -> {out_path}"
     say(success_msg, **took)
     summary.append(f"SUCCESS: {success_msg}")
@@ -162,28 +169,50 @@ def source_name(path, config):
     return Path(os.path.relpath(path, config.output_dir)).as_posix()
 
 
-def read_contents(day_dir):
-    """The day's record of {merged file name: [converted files]}; empty if there
-    is none or it can't be read."""
+# The record's key for {merged file name: clock offset it was made with}, for
+# files made with one; not a file name, which versions without it skip
+OFFSETS_KEY = '#clock_offsets'
+
+
+def _read_record(day_dir):
     try:
         record = json.loads((day_dir / CONTENTS_NAME).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return {}
-    if not isinstance(record, dict):
+    return record if isinstance(record, dict) else {}
+
+
+def read_offsets(day_dir):
+    """{merged file name: the clock offset it was made with}, for the files made
+    with one (others were made with none)."""
+    offsets = _read_record(day_dir).get(OFFSETS_KEY)
+    if not isinstance(offsets, dict):
         return {}
+    return {name: value for name, value in offsets.items()
+            if isinstance(value, int) and not isinstance(value, bool)}
+
+
+def read_contents(day_dir):
+    """The day's record of {merged file name: [converted files]}; empty if there
+    is none or it can't be read."""
+    record = _read_record(day_dir)
     # Leave out anything malformed, so those files count as unrecorded and are kept
     return {name: sources for name, sources in record.items()
             if isinstance(sources, list) and sources and all(isinstance(s, str) for s in sources)}
 
 
-def write_contents(day_dir, record, summary):
+def write_contents(day_dir, record, summary, offsets=None):
     path = day_dir / CONTENTS_NAME
     tmp = day_dir / (CONTENTS_NAME + '.part')
+    data = dict(record)
+    made_with = {name: offset for name, offset in (offsets or {}).items() if offset and name in record}
+    if made_with:
+        data[OFFSETS_KEY] = made_with
     try:
         if not record:
             path.unlink(missing_ok=True)
             return True
-        tmp.write_text(json.dumps(record, indent=1, sort_keys=True), encoding='utf-8')
+        tmp.write_text(json.dumps(data, indent=1, sort_keys=True), encoding='utf-8')
         tmp.replace(path)
         return True
     except OSError as e:
@@ -239,6 +268,25 @@ def remove_stale_merges(day_dir, written, summary, day_files, record, config):
     # Forget files that are no longer there (e.g. deleted by hand)
     for name in [name for name in record if not (day_dir / name).is_file()]:
         del record[name]
+
+def report_regrouped_days(groups, mp4_files, warn, config):
+    """Warn about merged days that have no events now, although every converted
+    file they were made from is still there: the time zone or clock offset
+    changed, and those events are in other days now. They aren't deleted: their
+    footage is merged again elsewhere only if that day's merge succeeded. A day
+    whose converted files are gone (e.g. deleted to save space) isn't reported."""
+    days = {day.strftime('%Y/%m/%d') for day in groups}
+    present = {source_name(f, config) for f in mp4_files}
+    for day_dir in sorted(config.merged_dir.glob('*/*/*')):
+        day = day_dir.relative_to(config.merged_dir).as_posix()
+        if not day_dir.is_dir() or day in days or unset_clock_day(day):
+            continue
+        sources = {s for name, held in read_contents(day_dir).items()
+                   if (day_dir / name).is_file() for s in held}
+        if sources and sources <= present:
+            warn(f"{day_dir} holds merged files for a day that has no events now: the time zone or clock "
+                 f"offset changed, so its events are in other days. Delete it once those days are merged")
+
 
 def main(argv=None):
     log.setup_streams()   # UTF-8 on the console, also for option errors
@@ -305,12 +353,12 @@ def run(config):
             failed += 1
             break
         day_dir = config.merged_dir / day_start.strftime('%Y/%m/%d')
-        record = read_contents(day_dir)
+        record, offsets = read_contents(day_dir), read_offsets(day_dir)
         written, day_failed = set(), False
         for k, start, end, split_files in split_day(day_start, files, n, config.tz):
             if not split_files:
                 continue
-            out_path = merge_group(start, end, split_files, summary, record, k, n, config)
+            out_path = merge_group(start, end, split_files, summary, record, offsets, k, n, config)
             if out_path:
                 written.add(out_path)
             else:
@@ -319,7 +367,8 @@ def run(config):
         if not day_failed:   # keep older files if this day's merge didn't complete
             remove_stale_merges(day_dir, written, summary, [f for _, f in files], record, config)
         if day_dir.is_dir():
-            write_contents(day_dir, record, summary)
+            write_contents(day_dir, record, summary, offsets)
+    report_regrouped_days(groups, mp4_files, warn, config)
     # Write summary report
     config.merged_dir.mkdir(parents=True, exist_ok=True)
     with open(config.merge_summary, 'w', **PATH_TEXT) as f:

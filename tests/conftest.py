@@ -75,6 +75,11 @@ class Workspace:
             return [sys.executable, '-m', 'crittervid', COMMANDS[script], *args]
         return [sys.executable, script, *args]
 
+    def run_crittervid(self, *args):
+        """The crittervid command itself, as given (no --timezone added)."""
+        return subprocess.run([sys.executable, '-m', 'crittervid', *args], cwd=self.root, env=self.env,
+                              capture_output=True, encoding='utf-8', errors='replace')
+
     def run(self, script, *args):
         return subprocess.run(
             self.command(script, *args),

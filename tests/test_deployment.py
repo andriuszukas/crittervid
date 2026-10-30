@@ -2,6 +2,7 @@
 offset, saved in <output>/deployment.json, and days grouped in that time zone."""
 import json
 from datetime import date, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -265,3 +266,99 @@ def test_a_day_when_the_clocks_go_back_merges_and_validates(ws):
     result = ws.run('validate_output.py')
     assert result.returncode == 0, result.stdout
     assert 'WARNING' not in result.stdout and 'ERROR' not in result.stdout
+
+
+# --- The clock offset in merged files, doctor and the summary (PR 2) ---
+
+def creation_times(ws):
+    """The creation_time each fake FFmpeg call was given, by its output's name."""
+    times = {}
+    for call in ws.ffmpeg_calls():
+        if 'creation_time' in ' '.join(call):
+            stamp = call[call.index('-metadata') + 1].split('=', 1)[1]
+            times[Path(call[-1]).name.removesuffix('.part')] = stamp
+    return times
+
+
+def test_merged_files_get_the_corrected_time_and_converted_files_the_cameras(ws):
+    ws.env['FAKE_FFMPEG_LOG'] = str(ws.root / 'calls')
+    ws.add_media('0001.media', b'morning')   # 06:26:41 UTC by the camera's clock: 1 s into its event
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--clock-offset', '-40')
+
+    assert result.returncode == 0, result.stdout
+    times = creation_times(ws)
+    assert times['1759300000_0001_0001.mp4'] == '2025-10-01T06:26:41.000000Z'   # as named
+    assert times['merged_20251001_0000_20251002_0000_part1of1.mp4'] == '2025-10-01T06:26:01.000000Z'
+
+
+def test_a_changed_clock_offset_merges_again(ws):
+    ws.add_media('0001.media', b'morning')
+    assert ws.run('process_all.py', '--accel', 'cpu').returncode == 0
+    assert 'SKIPPED' in ws.run('merge_videos.py').stdout   # up to date
+
+    result = ws.run('merge_videos.py', '--clock-offset', '60')
+
+    assert result.returncode == 0, result.stdout
+    assert 'SKIPPED' not in result.stdout and 'Merged 1 files' in result.stdout
+    [contents] = ws.files('merged_contents.json')
+    assert json.loads(contents.read_text(encoding='utf-8'))['#clock_offsets'] == {
+        'merged_20251001_0000_20251002_0000_part1of1.mp4': 60}
+    assert 'SKIPPED' in ws.run('merge_videos.py').stdout   # made with the saved offset now
+    result = ws.run('validate_output.py')
+    assert result.returncode == 0 and 'WARNING' not in result.stdout, result.stdout
+
+
+def test_a_day_left_without_events_after_a_change_is_reported_not_deleted(ws):
+    ws.add_afternoon_media('0001.media', b'afternoon')   # 14:46 UTC: 1 October, or 2 October at UTC+14
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+    ws.camera_timezone = KIRITIMATI
+
+    result = ws.run('merge_videos.py')
+
+    assert result.returncode == 0, result.stdout
+    assert 'holds merged files for a day that has no events now' in result.stdout
+    assert merged_names(ws) == ['merged_20251001_0000_20251002_0000_part1of1.mp4',
+                                'merged_20251002_0000_20251003_0000_part1of1.mp4']
+    assert 'no events now' in (ws.root / 'output' / 'merged' / 'merge_summary.txt').read_text(encoding='utf-8')
+
+
+def test_a_day_whose_converted_files_were_deleted_isnt_reported_as_regrouped(ws):
+    ws.add_media('0001.media', b'morning')
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+    ws.converted('0001.media').unlink()   # to save space, keeping the merged day
+
+    result = ws.run('merge_videos.py')
+
+    assert 'no events now' not in result.stdout
+
+
+def test_doctor_shows_the_saved_time_zone(ws):
+    ws.add_media('0001.media', b'morning')
+    assert ws.run('convert_media.py', '--accel', 'cpu', '--clock-offset', '75').returncode == 0
+
+    result = ws.run_crittervid('doctor')
+
+    assert 'OK: time zone UTC, clock offset +75 s (saved in ' in result.stdout
+
+
+def test_doctor_warns_when_no_time_zone_is_saved_and_fails_on_a_broken_file(ws):
+    result = ws.run_crittervid('doctor')
+    assert "WARNING: no time zone saved for output: days will be grouped in this computer's" in result.stdout
+
+    (ws.root / 'output').mkdir()
+    (ws.root / 'output' / 'deployment.json').write_text('{not json', encoding='utf-8')
+    result = ws.run_crittervid('doctor')
+    assert result.returncode == 1 and "ERROR: " in result.stdout and "can't be read" in result.stdout
+
+
+def test_the_summary_and_the_run_log_show_the_time_zone_in_use(ws):
+    ws.add_media('0001.media', b'morning')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--clock-offset', '75')
+
+    assert 'Time zone: UTC; clock offset +75 s' in result.stdout.split('=== Summary ===')[1]
+    [run_log] = ws.files('*.jsonl')
+    records = [json.loads(line) for line in run_log.read_text(encoding='utf-8').splitlines()]
+    [used] = [r for r in records if r['message'] == 'Deployment details in use']
+    assert used['settings'] == {'timezone': 'UTC', 'clock_offset': 75, 'site': None, 'camera': None}

@@ -97,6 +97,7 @@ def run(config, validate_output=True, dry_run=False):
             raise KeyboardInterrupt
 
     say("=== Summary ===")
+    say(deployment.summary(config))
     for step in steps.STEPS:
         if step.summary:
             for line in step.summary(config, ran[step.name], dry_run):

@@ -29,7 +29,8 @@
 ### Clock offset: raw times decide, corrected times are used
 
 - **Whether the clock was set** is decided on the raw time, before the offset is added, so an offset can't move an event across that line.
-- **The offset is added** only to events whose clock was set. Days, the merged files' names and `creation_time` all use the corrected time.
+- **The offset is added** only to events whose clock was set. Days, the merged files' names and the merged files' `creation_time` all use the corrected time.
+- **Converted files keep the camera's own time** as their `creation_time`, the one in their names (a change made while implementing PR 2). They aren't converted again when the offset changes, so a corrected time in them would go stale. Merged files record the offset each was made with, in the day's contents record, so a changed offset merges them again.
 - **The check against the card** (below) uses the raw time, because the camera wrote its folders by its own clock.
 
 ### Days and parts of days, with daylight saving
