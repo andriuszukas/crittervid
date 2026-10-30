@@ -25,7 +25,7 @@ def file_start(path):
 def unset_clock_files(files):
     """The converted files of events recorded before the camera's clock was set
     (#73). Their times count from the camera's power-up, not real days, so they
-    aren't merged."""
+    aren't merged unless their series is given a real start (find_series)."""
     return [f for f in files if (m := FILENAME_RE.search(str(f)))
             and not media_format.clock_was_set(int(m.group(1)))]
 
@@ -55,6 +55,55 @@ def midnight(day, tz=None):
     return naive.astimezone() if tz is None else naive.replace(tzinfo=tz)
 
 
+def event_name(path):
+    """The event a converted file belongs to, <start>_<length>: an event file's
+    own name, or a per-segment file's <event>/ folder."""
+    return path.stem if path.stem.count('_') == 1 else path.parent.name
+
+
+def find_series(files):
+    """The series of events recorded before the camera's clock was set (decision
+    record 0006), among converted files: [(name, [(start, length, event)])], each
+    named after its first event. Events are taken in camera-time order, whatever
+    folder they're in (a power-up can span a 2106/ and a 1970/ folder where the
+    date wraps); a new series starts when an event starts before the previous one
+    ended, as a camera that powers up again counts from 0 again."""
+    events = set()
+    for f in unset_clock_files(files):
+        name = event_name(f)
+        if re.fullmatch(r'\d{10,}_\d+', name):
+            start, length = name.split('_')
+            events.add((int(start), int(length), name))
+    series, end = [], None
+    for start, length, name in sorted(events):
+        if end is None or start < end:
+            series.append((name, []))
+            end = start + length
+        series[-1][1].append((start, length, name))
+        end = max(end, start + length)
+    return series
+
+
+def series_shifts(files, starts):
+    """{event: seconds to add to its camera time} for the events of each series
+    with a real start given (starts: {series name: its first event's real start,
+    in Unix seconds})."""
+    shifts = {}
+    for name, events in find_series(files):
+        if name in starts:
+            shift = starts[name] - events[0][0]
+            shifts.update({event: shift for _, _, event in events})
+    return shifts
+
+
+def shift_of(path, offset=0, shifts=None):
+    """Seconds added to a converted file's camera time: the clock offset if its
+    camera's clock was set, otherwise its series' shift (None without one)."""
+    if media_format.clock_was_set(int(FILENAME_RE.search(str(path)).group(1))):
+        return offset
+    return (shifts or {}).get(event_name(path))
+
+
 def event_time(seconds, tz=None, offset=0):
     """When an event (or a file of one) whose camera time is seconds started, in
     tz: with the clock offset added, for a camera whose clock was set."""
@@ -63,20 +112,23 @@ def event_time(seconds, tz=None, offset=0):
     return local_time(seconds, tz)
 
 
-def group_files_by_day(files, tz=None, offset=0):
+def group_files_by_day(files, tz=None, offset=0, shifts=None):
     """{day: [(start, file)]} for converted files of events whose clock was set,
-    each day being its local midnight in tz (None: the computer's time zone) and
-    each start the event's time with the clock offset, both aware; sorted by
-    start."""
+    and of series given a real start (shifts, from series_shifts), each day being
+    its local midnight in tz (None: the computer's time zone) and each start the
+    event's corrected time, both aware; sorted by start."""
     # An event converted as one file (<event>.mp4) supersedes per-segment files left
     # in its <event>/ folder by older versions; merging both would repeat footage
     events = {f.stem for f in files if FILENAME_RE.search(str(f)) and f.stem.count('_') == 1}
     groups = {}
     for f in files:
         m = FILENAME_RE.search(str(f))
-        if not m or f.parent.name in events or not media_format.clock_was_set(int(m.group(1))):
+        if not m or f.parent.name in events:
             continue
-        dt = event_time(int(m.group(1)), tz, offset)
+        shift = shift_of(f, offset, shifts)
+        if shift is None:   # recorded before the clock was set, in a series without a start
+            continue
+        dt = local_time(int(m.group(1)) + shift, tz)
         groups.setdefault(midnight(dt, tz), []).append((dt, f))
     # Sort by instant: two times in the hour repeated when the clocks go back
     # would otherwise be ordered by their clock time
