@@ -52,15 +52,16 @@ def options(config):
 
 
 @lru_cache(maxsize=1)
-def _names():
-    return available_timezones()
+def known_zones():
+    """The names of the time zone data's time zones."""
+    return frozenset(available_timezones())
 
 
 def zone(name):
     """The time zone called name, or Invalid. Only the names of the time zone
     data count: on Windows, ZoneInfo also accepts names that are the same file
     there (such as with a trailing space), which other systems would reject."""
-    if name not in _names():
+    if name not in known_zones():
         raise Invalid(f"unknown time zone '{name}': use an IANA name such as Europe/Vilnius or America/New_York")
     return ZoneInfo(name)
 

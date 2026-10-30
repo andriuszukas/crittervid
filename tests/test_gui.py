@@ -5,6 +5,7 @@ Skipped when Streamlit isn't installed (required on CI).
 The Streamlit GUI is due to be replaced by a PySide6 window (#41); these tests
 keep the current one honest until then.
 """
+import json
 from pathlib import Path
 
 import pytest
@@ -32,14 +33,14 @@ def gui(ws, monkeypatch):
 def fill_in_and_run(gui, ws):
     gui.text_input[0].input(str(ws.root / 'input' / 'DCIM'))
     gui.text_input[1].input(str(ws.root / 'output'))
-    gui.selectbox[0].select('CPU')
+    gui.selectbox[1].select('CPU')   # after the time zone
     [run_button] = [b for b in gui.button if b.label == 'Run']
     return run_button.click().run(timeout=RUN_TIMEOUT)
 
 
 def test_gui_shows_the_form(gui):
     assert not gui.exception
-    assert [t.label for t in gui.text_input] == ['Input directory', 'Output directory']
+    assert [t.label for t in gui.text_input] == ['Input directory', 'Output directory', 'Site', 'Camera']
     assert 'Run' in [b.label for b in gui.button]
     assert 'Merge everything again' in [c.label for c in gui.checkbox]
 
@@ -84,3 +85,37 @@ def test_old_app_name_still_shows_the_form(ws):
 
     assert not at.exception
     assert 'Run' in [b.label for b in at.button]
+
+
+def test_gui_saves_the_camera_details_and_fills_them_in_again(gui, ws):
+    ws.add_media('0001.media', b'good')
+    gui.text_input[1].input(str(ws.root / 'output')).run()   # a new folder fills them in afresh
+    gui.selectbox(key='timezone').select('Europe/Vilnius')
+    gui.number_input(key='clock_offset').set_value(75)
+    gui.text_input(key='site').input('Pond')
+    gui.selectbox[1].select('CPU')
+    [run_button] = [b for b in gui.button if b.label == 'Run']
+
+    at = run_button.click().run(timeout=RUN_TIMEOUT)
+
+    assert not at.exception
+    assert [s.value for s in at.success] == ['✅ Pipeline completed successfully!']
+    saved = json.loads((ws.root / 'output' / 'deployment.json').read_text(encoding='utf-8'))
+    assert (saved['timezone'], saved['clock_offset'], saved['site']) == ('Europe/Vilnius', 75, 'Pond')
+    # A new session on that output folder starts from what's saved
+    fresh = AppTest.from_file(str(ws.root / 'src' / 'crittervid' / 'gui' / 'streamlit_app.py'),
+                              default_timeout=RUN_TIMEOUT).run()
+    fresh.text_input[1].input(str(ws.root / 'output')).run()
+    assert fresh.selectbox(key='timezone').value == 'Europe/Vilnius'
+    assert fresh.number_input(key='clock_offset').value == 75
+    assert fresh.text_input(key='site').value == 'Pond'
+
+
+def test_gui_warns_without_a_time_zone_and_shows_a_broken_file(gui, ws):
+    assert any("No time zone set" in w.value for w in gui.warning)
+    (ws.root / 'output').mkdir()
+    (ws.root / 'output' / 'deployment.json').write_text('{not json', encoding='utf-8')
+
+    at = gui.text_input[1].input(str(ws.root / 'output')).run()
+
+    assert any("can't be read" in e.value for e in at.error)

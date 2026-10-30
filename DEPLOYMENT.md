@@ -123,7 +123,13 @@ In the GUI, choose under **Hardware Acceleration**; on the command line, use `--
 - when running from source, put it in the project folder.
 
 ### Checking the setup
-`crittervid doctor` (with your `--input-dir` and `--output-dir`) checks that FFmpeg and ffprobe are found, tries each hardware encoder on a tiny test clip, shows which one `--accel auto` picks and whether it works, and checks the output folder and free disk space. Each line starts with OK, WARNING or ERROR.
+`crittervid doctor` (with your `--input-dir` and `--output-dir`) checks that FFmpeg and ffprobe are found, tries each hardware encoder on a tiny test clip, shows which one `--accel auto` picks and whether it works, checks the output folder and free disk space, and shows the camera's time zone saved for the output folder. Each line starts with OK, WARNING or ERROR.
+
+### Footage lands on the wrong day, or "events fall on a different day than on the card"
+Set the camera's time zone: "Camera's time zone" in the GUI, or `--timezone` (such as `--timezone Europe/Vilnius`). Without it, days follow this computer's time zone. If the camera's clock was wrong, set the clock offset too. Both are saved in `deployment.json` in the output folder; see the README's "Camera time zone and other details".
+
+### "deployment.json can't be read", or "unknown time zone"
+The output folder's `deployment.json` is broken, or names a time zone that doesn't exist. Fix it (it's a small JSON file) or delete it and give the details again. Time zone names are IANA names such as `Europe/London`, spelt exactly.
 
 ### Finding out what went wrong
 Each run's first line names its run log (`Run <id> started; log: <path>`); the GUI shows the run ID and the log's path when the run ends. The run log has the details the console leaves out, such as FFmpeg's full error output and tracebacks. The app log, `%LOCALAPPDATA%\CritterVid\Logs\crittervid.log` on Windows, also has runs that stopped before writing any output. See the README's "Logs" section.
