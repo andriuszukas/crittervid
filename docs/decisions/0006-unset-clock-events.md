@@ -1,6 +1,6 @@
 # 0006: Dating events recorded before the camera's clock was set
 
-- **Status:** proposed
+- **Status:** accepted
 - **Issues:** #73 (events recorded before the camera clock was set); builds on 0005 (time zone and clock offset)
 
 ## Context
@@ -65,7 +65,7 @@
    - the series listed in the warnings, and the checks above.
 2. **GUI and docs:** a table of the series in the GUI, each with a start time field, plus README and DEPLOYMENT sections.
 
-## Questions for you
+## Questions (answered: yes to all three)
 
 1. **Give the real start of each series' first event?** Recommended: it's the one time a person can usually tell. The alternative is a clock offset per series in seconds, which is harder to work out.
 2. **Read a time without an offset as the camera's local time?** Recommended: that's how people remember times. The alternative is always UTC.
