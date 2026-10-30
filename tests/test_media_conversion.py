@@ -324,6 +324,16 @@ def test_event_file_records_when_its_footage_starts(real_ws):
     assert creation_time(only_output(real_ws)) == '2026-10-01T06:00:00.000000Z'
 
 
+def test_an_event_file_keeps_the_cameras_time_with_a_clock_offset(real_ws):
+    # Converted files keep the time in their names; merged files get the offset (0005)
+    write_event(real_ws.root / 'input' / 'DCIM', START, 10)
+
+    result = real_ws.run('convert_media.py', '--accel', 'cpu', '--clock-offset', '3600')
+
+    assert result.returncode == 0, result.stdout
+    assert creation_time(only_output(real_ws)) == '2026-10-01T06:00:00.000000Z'
+
+
 def test_event_recorded_before_the_clock_was_set_gets_no_creation_time(real_ws):
     write_event(real_ws.root / 'input' / 'DCIM', utc(1970, 1, 1, 3, 0), 10)
 

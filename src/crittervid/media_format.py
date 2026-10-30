@@ -44,13 +44,14 @@ def clock_was_set(timestamp):
     return CLOCK_SET_FROM <= timestamp < CLOCK_SET_UNTIL
 
 
-def creation_time_args(seconds):
-    """FFmpeg options that record when a file's footage starts (Unix seconds) as
-    its creation_time, in UTC, which players and tools such as Timelapse show. None
-    for a time counted by a camera whose clock wasn't set (#73)."""
+def creation_time_args(seconds, offset=0):
+    """FFmpeg options that record when a file's footage starts (Unix seconds by
+    the camera's clock, plus the clock offset) as its creation_time, in UTC, which
+    players and tools such as Timelapse show. None for a time counted by a camera
+    whose clock wasn't set (#73), which the offset doesn't change."""
     if not clock_was_set(seconds):
         return []
-    stamp = datetime.fromtimestamp(seconds, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    stamp = datetime.fromtimestamp(seconds + offset, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
     return ['-metadata', f'creation_time={stamp}']
 
 

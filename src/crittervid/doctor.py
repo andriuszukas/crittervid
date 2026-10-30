@@ -4,7 +4,8 @@
 - the encoders --accel can use: each tried on a tiny test clip, and which one
   Auto would pick;
 - the output folder: whether it can be written;
-- disk space: free space where the output goes, against the input's size.
+- disk space: free space where the output goes, against the input's size;
+- the time zone and clock offset saved for the output folder (decision record 0005).
 
 Each line starts with OK, WARNING or ERROR; the exit code is 1 if any check
 found an error. It only reads (and writes one small test file it removes).
@@ -16,7 +17,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, log
+from . import __version__, deployment, log
 from .config import PipelineConfig
 from .ffmpeg import ACCEL_ORDER, encoder_works, get_ffmpeg_path, get_ffprobe_path, tool_version
 
@@ -149,6 +150,23 @@ def check_space(input_dir, output_dir):
     return False
 
 
+def check_deployment(config):
+    """The time zone and clock offset saved for the output folder, if any."""
+    try:
+        saved = deployment.read(config)
+    except deployment.Invalid as e:
+        say(f'ERROR: {e}')
+        return True
+    if 'timezone' not in saved:
+        say(f"WARNING: no time zone saved for {config.output_dir}: days will be grouped in this computer's "
+            f"({deployment.computer_zone()}). Give the camera's with --timezone when you run CritterVid")
+    else:
+        offset = saved.get('clock_offset')
+        say(f"OK: time zone {saved['timezone']}" + (f", clock offset {offset:+d} s" if offset else '')
+            + f" (saved in {deployment.path(config)})")
+    return False
+
+
 def run(config):
     """Run every check; returns 0, or 1 if one found an error."""
     get_ffmpeg_path.cache_clear()   # look again, as things may have changed since
@@ -158,7 +176,8 @@ def run(config):
     problems = [check_ffmpeg()]
     if not problems[0]:
         problems.append(check_encoders())
-    problems += [check_output(config.output_dir), check_space(config.input_dir, config.output_dir)]
+    problems += [check_output(config.output_dir), check_space(config.input_dir, config.output_dir),
+                 check_deployment(config)]
     if any(problems):
         say('Some checks failed; see the ERROR lines above.')
         return 1

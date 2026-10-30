@@ -6,6 +6,7 @@ read from there on later runs, so every step on an output folder groups days
 the same way. An option given on a later run replaces the saved value.
 """
 import json
+import logging
 import os
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -174,10 +175,24 @@ def settle(config, save):
     if 'timezone' in values:
         log.say(_log, f"Time zone: {values['timezone']} ({source('timezone')})")
     else:
-        local = datetime.now().astimezone().tzname()
-        log.say(_log, f"WARNING: no time zone set: days are grouped in this computer's ({local}). "
+        log.say(_log, f"WARNING: no time zone set: days are grouped in this computer's ({computer_zone()}). "
                       f"Give the camera's with --timezone (such as --timezone Europe/Vilnius); it's saved "
                       f"for later runs")
     if values.get('clock_offset'):
         log.say(_log, f"Clock offset: {describe('clock_offset', values['clock_offset'])} ({source('clock_offset')})")
-    return replace(config, **{name: values.get(name) for name in FIELDS}, deployment_settled=True)
+    settled = {name: values.get(name) for name in FIELDS}
+    # The run log's first record has the settings as given; this has them as used
+    log.file_only(_log, logging.INFO, 'Deployment details in use', settings=settled)
+    return replace(config, **settled, deployment_settled=True)
+
+
+def computer_zone():
+    """The computer's time zone, by the name it gives (which may not be an IANA one)."""
+    return datetime.now().astimezone().tzname()
+
+
+def summary(config):
+    """What a settled config's time zone and clock offset are, for a run's summary."""
+    zone = config.timezone or f"none set, so this computer's ({computer_zone()})"
+    offset = f"; clock offset {describe('clock_offset', config.clock_offset)}" if config.clock_offset else ''
+    return f"Time zone: {zone}{offset}"

@@ -5,7 +5,7 @@
     crittervid merge     converted files into days
     crittervid validate  check the outputs
     crittervid gui       the graphical interface (also what no command opens)
-    crittervid doctor    check FFmpeg, the encoders, the output folder and disk space
+    crittervid doctor    check FFmpeg, the encoders, the output folder, disk space and the time zone
 
 Each command has its own options; `crittervid <command> --help` lists them.
 """
