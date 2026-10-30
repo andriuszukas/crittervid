@@ -76,6 +76,9 @@ Select the input and output folders, choose hardware acceleration, and click **R
 # Full pipeline: convert -> merge -> validate
 crittervid run --input-dir input/DCIM --output-dir output --accel cuda
 
+# The same, giving the camera's time zone (saved in the output folder for later runs)
+crittervid run --input-dir input/DCIM --output-dir output --timezone Europe/Vilnius
+
 # Individual steps
 crittervid convert --input-dir input/DCIM --output-dir output --accel cuda
 crittervid merge --output-dir output --splits-per-day 2
@@ -87,7 +90,7 @@ crittervid convert --retry-failed --max-retries 5
 # Preview without running FFmpeg
 crittervid run --dry-run
 
-# Check FFmpeg, which hardware encoders work, the output folder and disk space
+# Check FFmpeg, which hardware encoders work, the output folder, disk space and the time zone
 crittervid doctor --input-dir input/DCIM --output-dir output
 ```
 
@@ -97,22 +100,53 @@ older script names (`python process_all.py`, `python convert_media.py`, …) sti
 and run from a checkout even without installing.
 
 Key options: `--accel {cpu,cuda,qsv,vaapi,amf,auto}`, `--workers N`, `--copy`
-(stream-copy without re-encoding), `--splits-per-day N`, `--no-validate`, `--deep-validate`.
+(stream-copy without re-encoding), `--splits-per-day N`, `--no-validate`, `--deep-validate`,
+and the camera details below.
+
+## Camera time zone and other details
+
+Footage is grouped into the camera's days, so CritterVid needs to know the time zone the camera's
+clock was set to. The card doesn't record it.
+
+| Option | GUI field | What it's for |
+|---|---|---|
+| `--timezone NAME` | Camera's time zone | An IANA name such as `Europe/Vilnius` or `America/New_York`. Days, parts of days and merged file names follow it, with daylight saving: a day is 23 or 25 hours when the clocks change. |
+| `--clock-offset SECONDS` | Clock offset | Added to the camera's times if its clock was wrong: `75` if it was 75 s slow, `-3600` if it was an hour fast. Merged files get the corrected times; converted files keep the camera's own, which their names show. |
+| `--site TEXT` | Site | Where the camera was. |
+| `--camera TEXT` | Camera | Which camera it was. |
+
+- **Saved for later runs:** the first run given them saves them in `<output>/deployment.json`.
+  Later runs on that output folder use them without retyping, and the GUI fills them in. An
+  option given again replaces the saved value, with a warning; days are then regrouped and merged
+  again. A merged day left without events is reported, not deleted.
+- **Without a time zone,** days are grouped in the computer's time zone, with a warning. That's
+  right only if the camera's clock was set to the same one.
+- **A check against the card:** the camera files each event under its own date, so the conversion
+  warns when the time zone puts events on other days than the card does. `crittervid doctor` shows
+  the time zone and clock offset saved for the output folder.
+- **A broken `deployment.json`** (or an unknown time zone) stops the run with an error, rather
+  than grouping days some other way. To unset a saved value, edit or delete that file.
+- **Privacy:** the site and camera aren't written into the videos. They are in
+  `deployment.json` and the run logs, so leave those out of copies you share if the site is
+  sensitive.
+- Events recorded before the camera's clock was set aren't affected by the offset; see below.
 
 ## Output
 
 ```
 output/
   YYYY/MM/DD/<timestamp>_<duration>.mp4    # one file per recorded event
-  merged/YYYY/MM/DD/merged_*.mp4           # merged daily clips
+  merged/YYYY/MM/DD/merged_*.mp4           # merged daily clips, in the camera's days
   merged/YYYY/MM/DD/merged_contents.json    # which events each merged clip holds
+  deployment.json                          # the camera's time zone and other details
   conversion_summary.txt                   # per-run reports
   merged/merge_summary.txt
 ```
 
 Every event file has an audio track; it's silent if the camera recorded no sound. Every output
 file records when its footage starts as its `creation_time` (UTC), which players and tools such as
-Timelapse show; events recorded before the camera's clock was set get none. Files made by earlier
+Timelapse show: by the camera's clock for event files, and with the clock offset for merged files.
+Events recorded before the camera's clock was set get none. Files made by earlier
 versions get it once they're made again (convert after deleting them; merge with `--force`). Event
 folders in which no file is in the cameras' record format are converted one segment at a time
 instead, into `YYYY/MM/DD/<timestamp>_<duration>/` folders. An event file isn't redone if more
