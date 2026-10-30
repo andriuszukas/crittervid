@@ -362,3 +362,51 @@ def test_the_summary_and_the_run_log_show_the_time_zone_in_use(ws):
     records = [json.loads(line) for line in run_log.read_text(encoding='utf-8').splitlines()]
     [used] = [r for r in records if r['message'] == 'Deployment details in use']
     assert used['settings'] == {'timezone': 'UTC', 'clock_offset': 75, 'site': None, 'camera': None}
+
+
+def test_a_merge_stopped_while_the_offset_changes_merges_again_later(ws, fake_ffmpeg_dir, monkeypatch):
+    # Killed after the new file replaced the old, before the day's record was
+    # written again: the record mustn't say the file was made with the old offset
+    import os
+    from crittervid import merge
+    from crittervid.config import PipelineConfig
+    suffix = '.bat' if os.name == 'nt' else ''
+    monkeypatch.setattr(merge, 'get_ffmpeg_path', lambda: str(fake_ffmpeg_dir / f'ffmpeg{suffix}'))
+    monkeypatch.setattr(merge, 'get_ffprobe_path', lambda: str(fake_ffmpeg_dir / f'ffprobe{suffix}'))
+    ws.add_media('0001.media', b'morning')
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0   # offset 0
+    [contents] = ws.files('merged_contents.json')
+    on_disk = []
+    write = merge.write_contents
+
+    def write_and_keep(*args, **kwargs):
+        written = write(*args, **kwargs)
+        on_disk.append(contents.read_text(encoding='utf-8'))
+        return written
+    monkeypatch.setattr(merge, 'write_contents', write_and_keep)
+
+    assert merge.run(PipelineConfig(output_dir=ws.root / 'output', clock_offset=60)) == 0
+    contents.write_text(on_disk[0], encoding='utf-8')   # as the stop left it
+    result = ws.run('merge_videos.py', '--clock-offset', '0')
+
+    assert 'SKIPPED' not in result.stdout and 'Merged 1 files' in result.stdout
+
+
+def test_a_day_with_a_merged_file_it_has_no_record_of_isnt_reported_as_regrouped(ws):
+    ws.add_afternoon_media('0001.media', b'afternoon')
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+    old_day = ws.root / 'output' / 'merged' / '2025' / '10' / '01'
+    (old_day / 'merged_20251001_0000_20251001_1200_part1of2.mp4').write_bytes(b'OKold')   # unrecorded
+    ws.camera_timezone = KIRITIMATI
+
+    result = ws.run('merge_videos.py')
+
+    assert 'no events now' not in result.stdout
+
+
+def test_the_raw_time_decides_whether_the_clock_was_set(tmp_path):
+    from crittervid.media_format import CLOCK_SET_FROM
+    unset = tmp_path / f'{CLOCK_SET_FROM - 10:010d}_0010.mp4'   # 10 s before the clock counts as set
+
+    assert names.group_files_by_day([unset], UTC, offset=100) == {}
+    assert names.event_time(CLOCK_SET_FROM - 10, UTC, 100).timestamp() == CLOCK_SET_FROM - 10

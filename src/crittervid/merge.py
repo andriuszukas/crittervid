@@ -125,17 +125,25 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config):
     # with what the old one held: whenever the run stops, the record lists at
     # least what the file holds, which only ever keeps a file that could have
     # been deleted, never the other way round
-    previous, previous_offset = record.get(out_name), offsets.get(out_name)
+    previous = record.get(out_name)
+    had_offset, previous_offset = out_name in offsets, offsets.get(out_name)
     record[out_name] = sorted(set(previous or []) | set(sources))
-    # The offset is recorded once the new file is in place: until then a stop
-    # leaves the old file, and an offset it wasn't made with could pass it as
-    # up to date
+    # Likewise its offset: if it changes, it's unknown (None, which no offset
+    # matches) until the new file is in place and recorded, so a stop at any
+    # point only costs merging it again, never passes a file made with another
+    # offset as up to date
+    if offsets.get(out_name, 0) != offset:
+        offsets[out_name] = None
 
     def restore():
         if previous is None:
             record.pop(out_name)
         else:
             record[out_name] = previous
+        if had_offset:
+            offsets[out_name] = previous_offset
+        else:
+            offsets.pop(out_name, None)
 
     def fail(reason):
         tmp_path.unlink(missing_ok=True)
@@ -184,12 +192,13 @@ def _read_record(day_dir):
 
 def read_offsets(day_dir):
     """{merged file name: the clock offset it was made with}, for the files made
-    with one (others were made with none)."""
+    with one (others were made with none); None where it isn't known, such as
+    for a file being replaced when a run stopped."""
     offsets = _read_record(day_dir).get(OFFSETS_KEY)
     if not isinstance(offsets, dict):
         return {}
-    return {name: value for name, value in offsets.items()
-            if isinstance(value, int) and not isinstance(value, bool)}
+    return {name: value if isinstance(value, int) and not isinstance(value, bool) else None
+            for name, value in offsets.items()}
 
 
 def read_contents(day_dir):
@@ -205,7 +214,7 @@ def write_contents(day_dir, record, summary, offsets=None):
     path = day_dir / CONTENTS_NAME
     tmp = day_dir / (CONTENTS_NAME + '.part')
     data = dict(record)
-    made_with = {name: offset for name, offset in (offsets or {}).items() if offset and name in record}
+    made_with = {name: offset for name, offset in (offsets or {}).items() if offset != 0 and name in record}
     if made_with:
         data[OFFSETS_KEY] = made_with
     try:
@@ -281,11 +290,14 @@ def report_regrouped_days(groups, mp4_files, warn, config):
         day = day_dir.relative_to(config.merged_dir).as_posix()
         if not day_dir.is_dir() or day in days or unset_clock_day(day):
             continue
-        sources = {s for name, held in read_contents(day_dir).items()
-                   if (day_dir / name).is_file() for s in held}
-        if sources and sources <= present:
-            warn(f"{day_dir} holds merged files for a day that has no events now: the time zone or clock "
-                 f"offset changed, so its events are in other days. Delete it once those days are merged")
+        record = read_contents(day_dir)
+        merged = [f for f in day_dir.iterdir() if MERGED_NAME.fullmatch(f.name)]
+        if not merged or any(f.name not in record for f in merged):
+            continue   # a file without a record may hold footage that's nowhere else
+        if {s for f in merged for s in record[f.name]} <= present:
+            warn(f"{day_dir} holds merged files for a day that has no events now, probably because the "
+                 f"time zone or clock offset changed: its events are in other days. Delete it once those "
+                 f"days are merged")
 
 
 def main(argv=None):
