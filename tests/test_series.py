@@ -174,3 +174,100 @@ def test_a_broken_series_in_the_file_stops_the_run(ws, series, problem):
     result = ws.run('merge_videos.py')
 
     assert result.returncode == 2 and problem in result.stdout
+
+
+def test_an_event_inside_an_earlier_one_starts_a_series_that_later_events_join(tmp_path):
+    # The second event starts inside the first (a new power-up); the third,
+    # after the second ended, carries on the second's series
+    found = names.find_series(files(tmp_path, '1970/01/01/0000000001_1204.mp4', '1970/01/01/0000000010_0010.mp4',
+                                    '1970/01/01/0000001000_0010.mp4'))
+
+    assert [(name, [event for _, _, event in events]) for name, events in found] == [
+        ('0000000001_1204', ['0000000001_1204']),
+        ('0000000010_0010', ['0000000010_0010', '0000001000_0010'])]
+
+
+def test_the_listed_length_runs_to_the_latest_end(ws):
+    for event in ('0000000001_1200', '0000000600_0010'):   # the second ends long before the first
+        path = ws.root / 'input' / 'DCIM' / '1970' / '01' / '01' / event / '0001.media'
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'unset')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--no-validate')
+
+    assert '  0000000001_1200: 1 events, 20 min' in result.stdout
+
+
+def test_more_than_one_power_up_is_warned_about_until_all_are_dated(ws):
+    for event in ('0000000001_0602', '0000000010_0010'):
+        path = ws.root / 'input' / 'DCIM' / '1970' / '01' / '01' / event / '0001.media'
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'unset')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--no-validate')
+    assert 'the camera was powered up 2 times before its clock was set' in result.stdout
+
+    result = ws.run('merge_videos.py', '--series-start', f'{SERIES}=2025-10-01T08:00',
+                    '--series-start', '0000000010_0010=2025-10-02T08:00')
+    assert 'powered up' not in result.stdout
+
+
+def test_validation_alone_doesnt_save_a_series_start(ws):
+    add_unset_series(ws)
+    assert ws.run('process_all.py', '--accel', 'cpu', '--series-start', f'{SERIES}=2025-10-01T08:00').returncode == 0
+
+    result = ws.run('validate_output.py', '--series-start', f'{SERIES}=2025-10-01T09:00')
+
+    assert f'Series {SERIES} started at 2025-10-01T09:00:00+00:00 (option, not saved)' in result.stdout
+    assert saved(ws)['series'] == {SERIES: '2025-10-01T08:00:00+00:00'}
+
+
+def test_a_dry_run_forwards_the_series_starts(ws):
+    result = ws.run('process_all.py', '--dry-run', '--series-start', f'{SERIES}=2025-10-01T08:00')
+
+    assert f'--series-start={SERIES}=2025-10-01T08:00:00+00:00' in result.stdout
+
+
+def test_a_retry_names_a_series_by_its_first_event(ws):
+    add_unset_series(ws)
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    # A retry of the second event alone
+    failed = ws.root / 'input' / 'DCIM' / '1970' / '01' / '01' / '0000000603_0602'
+    (ws.root / 'output' / 'conversion_failed.txt').write_text(str(failed) + '\n', encoding='utf-8')
+    for f in ws.files('0000000603_0602_*.mp4'):
+        f.unlink()
+
+    result = ws.run('convert_media.py', '--accel', 'cpu', '--retry-failed')
+
+    assert f'in series {SERIES};' in result.stdout and 'series 0000000603_0602' not in result.stdout
+
+
+@pytest.mark.parametrize('start, saved_as', [
+    ('2025-10-01 08:00', '2025-10-01T08:00:00+00:00'),
+    ('2025-10-01T08:00:30', '2025-10-01T08:00:30+00:00'),
+    ('2025-10-01T10:00+0200', '2025-10-01T10:00:00+02:00'),
+    ('2025-10-01T10:00+02:00', '2025-10-01T10:00:00+02:00'),
+    ('2025-10-01T08:00z', '2025-10-01T08:00:00+00:00'),
+])
+def test_series_start_formats(start, saved_as):
+    from crittervid import deployment
+    assert deployment.resolve_start(SERIES, start, 'UTC') == saved_as
+
+
+@pytest.mark.parametrize('start', ['20251001T0800', '2025-W40-3T08:00', '2025-10-01T08:00:00.5', '2025-10-01'])
+def test_other_time_formats_are_refused_on_every_python(start):
+    from crittervid import deployment
+    with pytest.raises(deployment.Invalid, match="isn't a date and time"):
+        deployment.resolve_start(SERIES, start, 'UTC')
+
+
+def test_a_recording_running_into_a_dated_series_is_warned_about(ws):
+    add_unset_series(ws)
+    # A dated event from 07:50 to 08:10 UTC; the series starts at 08:00
+    path = ws.root / 'input' / 'DCIM' / '2025' / '10' / '01' / '1759305000_1200' / '0001.media'
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'dated')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--no-validate', '--series-start', f'{SERIES}=2025-10-01T08:00')
+
+    assert f'series {SERIES}, as dated, overlaps 1 other recordings' in result.stdout

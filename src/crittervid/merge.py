@@ -67,6 +67,15 @@ def up_to_date(out_path, sources, files, record, offsets, offset):
         return False
 
 
+def creation_time(path, shift):
+    """FFmpeg options for a merged file's creation_time, from its first file: its
+    camera time with the clock offset, or with its series' shift."""
+    seconds = file_start(path)
+    if media_format.clock_was_set(seconds):
+        return media_format.creation_time_args(seconds, shift)
+    return media_format.creation_time_args(seconds + shift)
+
+
 def merge_group(start, end, files, summary, record, offsets, k, n, config, shifts=None):
     out_dir = config.merged_dir / start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -111,7 +120,7 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config, shift
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
     cmd = [get_ffmpeg_path(), '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac',
-           *media_format.creation_time_args(file_start(files[0][1]) + offset), '-f', 'mp4', media_arg(tmp_path)]
+           *creation_time(files[0][1], offset), '-f', 'mp4', media_arg(tmp_path)]
     started = time.monotonic()
     _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(out_path)})
     result = subprocess.run(cmd, capture_output=True)
@@ -302,7 +311,7 @@ def report_series(series, shifts, groups, warn, config):
         warn(f"{sum(len(events) for _, events in undated)} events weren't merged: they were recorded before the "
              f"camera's clock was set, so their real time is unknown. Give each series the real start of its first "
              f"event (the camera's local time) to merge them into their days:\n" + '\n'.join(lines))
-    if len(series) > 1:
+    if undated and len(series) > 1:
         warn(f"the camera was powered up {len(series)} times before its clock was set, and their events overlap "
              f"by the camera's clock, so a series may hold events of another power-up; check them before giving "
              f"their starts")
@@ -314,8 +323,10 @@ def report_series(series, shifts, groups, warn, config):
             continue
         shift = shifts[events[0][2]]
         begin, end = events[0][0] + shift, max(s + n for s, n, _ in events) + shift
+        # Other recordings that run into the series' span, by their events' lengths
         clashes = {f for _, files in dated for t, f in files
-                   if begin <= t.timestamp() < end and shift_of(f, config.clock_offset or 0, shifts) != shift}
+                   if t.timestamp() < end and t.timestamp() + int(FILENAME_RE.search(str(f)).group(2)) > begin
+                   and shift_of(f, config.clock_offset or 0, shifts) != shift}
         if clashes:
             warn(f"series {name}, as dated, overlaps {len(clashes)} other recordings (such as {min(clashes)}); "
                  f"the camera records one thing at a time, so is its start right?")

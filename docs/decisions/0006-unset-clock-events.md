@@ -51,7 +51,7 @@
   - Its `schema` becomes 2 only when a series is saved, so an older version refuses that file instead of rewriting it without the series. Files without series stay at 1.
   - Reading it checks `series` like the other fields: a map of names to times with offsets.
   - A correction for a series that isn't among the converted files is kept, with a warning.
-- **Listed in the warnings:** the merge's warning about unset events (it sees all the converted files) lists each series with no correction: its name, number of events and length from first start to last end. It also gives the option to copy, such as `--series-start 0000000001_0602=<its real start>`. The conversion keeps its warning for each event.
+- **Listed in the warnings:** the merge's warning about unset events (it sees all the converted files) lists each series with no correction: its name, number of events and length from first start to last end. It also gives the option to copy, such as `--series-start 0000000001_0602=<its real start>`. The conversion gives one warning instead of one per event, naming the series without a start, found as the merge finds them (among the events it converts and those converted already).
 - **Checks:**
   - A corrected start that isn't a time a set clock could give (the 2000–2100 range of `clock_was_set`), or that's in the future, is an error.
   - A corrected series that overlaps dated footage gives a warning, because the camera records one thing at a time.

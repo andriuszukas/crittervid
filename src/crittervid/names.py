@@ -78,9 +78,8 @@ def find_series(files):
     for start, length, name in sorted(events):
         if end is None or start < end:
             series.append((name, []))
-            end = start + length
         series[-1][1].append((start, length, name))
-        end = max(end, start + length)
+        end = start + length   # within a series events don't overlap, so this is its end
     return series
 
 

@@ -23,6 +23,9 @@ FILE_NAME = 'deployment.json'
 SCHEMA = 2          # the newest this version reads; written only for files with series
 PLAIN_SCHEMA = 1    # for files without series, which versions before 0006 read too
 SERIES_NAME = re.compile(r'\d{10,}_\d+')   # a series is named after its first event
+# A series start: YYYY-MM-DDTHH:MM[:SS], with Z or +HH:MM (or +HHMM) for UTC times,
+# checked here so every Python version takes the same ones
+START_TIME = re.compile(r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?)(Z|[+-]\d{2}:?\d{2})?', re.IGNORECASE)
 FIELDS = ('timezone', 'clock_offset', 'site', 'camera')
 MAX_CLOCK_OFFSET = 10 * 366 * 86400   # seconds: a clock more than 10 years out wasn't set (#73)
 LABELS = {'timezone': 'time zone', 'clock_offset': 'clock offset', 'site': 'site', 'camera': 'camera'}
@@ -101,10 +104,16 @@ def resolve_start(name, when, timezone_name):
     if not SERIES_NAME.fullmatch(name) or media_format.clock_was_set(int(name.split('_')[0])):
         raise Invalid(f"'{name}' isn't the name of a series of events recorded before the camera's clock was "
                       f"set (a name like 0000000001_0602; the merge lists them)")
+    m = START_TIME.fullmatch(when)
     try:
-        start = datetime.fromisoformat(when[:-1] + '+00:00' if when[-1:] in 'Zz' else when)
+        if not m:
+            raise ValueError
+        utc = m.group(2) or ''
+        utc = '+00:00' if utc.upper() == 'Z' else utc if ':' in utc or not utc else f'{utc[:3]}:{utc[3:]}'
+        start = datetime.fromisoformat(m.group(1).replace(' ', 'T') + utc)
     except ValueError:
-        raise Invalid(f"series {name}: '{when}' isn't a date and time such as 2025-06-01T14:30") from None
+        raise Invalid(f"series {name}: '{when}' isn't a date and time such as 2025-06-01T14:30 "
+                      f"(or with a UTC offset, such as 2025-06-01T14:30+02:00)") from None
     if start.tzinfo is None:
         if not timezone_name:
             raise Invalid(f"series {name}: {when} has no UTC offset, so it's the camera's local time, but no time "
@@ -171,7 +180,7 @@ def read(config):
             if not isinstance(when, str):
                 raise Invalid(f"{file}: series {name}: the start must be a time, not {when!r}")
             try:
-                if datetime.fromisoformat(when).tzinfo is None:
+                if not (m := START_TIME.fullmatch(when)) or not m.group(2):
                     raise ValueError
                 resolve_start(name, when, None)
             except ValueError:

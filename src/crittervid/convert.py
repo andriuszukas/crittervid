@@ -415,8 +415,12 @@ def report_undated_series(event_dirs, config):
     """Warn about the events recorded before the camera's clock was set whose
     series has no real start (decision record 0006): they're converted, but the
     merge leaves them out of days until it's given."""
-    # The series as the merge finds them, from the events' names
+    # The series as the merge finds them: from the names of the events this run
+    # converts and of those converted already (a retry or part of a card has
+    # only some of a series' events)
     events = [Path(d.name + '.mp4') for d in event_dirs if EVENT_FOLDER.fullmatch(d.name)]
+    if config.output_dir.is_dir():
+        events += [path for path in config.output_dir.rglob('*.mp4') if config.merged_dir not in path.parents]
     starts = deployment.series_starts(config)
     undated = [(name, found) for name, found in names.find_series(events) if name not in starts]
     if undated:
