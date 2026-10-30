@@ -28,7 +28,7 @@ Each `.media` file is a sequence of records. Every byte of every sampled file is
 |---|---|
 | 0–3 | record type: `0` video frame, `1` video keyframe (begins with SPS/PPS), `3` audio |
 | 4–7 | payload length |
-| 8–11 | a millisecond value (meaning not confirmed) |
+| 8–11 | the wall clock in milliseconds: Unix time in ms, truncated to 32 bits (found for #73; for events recorded before the clock was set it counts from 0, like their folder names) |
 | 12–15 | always 0 |
 | 16–23 | **timestamp, microseconds** on the camera's own clock, not since 1970: an event's first record is a few seconds in. Only differences between them matter; the event's real start (UTC) is in its folder name |
 
