@@ -138,7 +138,7 @@ def test_a_dry_run_saves_nothing(ws):
     result = ws.run('process_all.py', '--dry-run')
 
     assert result.returncode == 0, result.stdout
-    assert '--timezone UTC' in result.stdout   # forwarded to each step
+    assert '--timezone=UTC' in result.stdout   # forwarded to each step
     assert 'Time zone: UTC (option, not saved)' in result.stdout
     assert not (ws.root / 'output' / 'deployment.json').exists()
 
@@ -410,3 +410,11 @@ def test_the_raw_time_decides_whether_the_clock_was_set(tmp_path):
 
     assert names.group_files_by_day([unset], UTC, offset=100) == {}
     assert names.event_time(CLOCK_SET_FROM - 10, UTC, 100).timestamp() == CLOCK_SET_FROM - 10
+
+
+def test_a_clock_offset_of_more_than_ten_years_is_refused(ws):
+    ws.add_media('0001.media', b'morning')
+
+    result = ws.run('process_all.py', '--accel', 'cpu', '--clock-offset', '400000000')
+
+    assert result.returncode == 2 and 'more than 10 years' in result.stdout

@@ -123,9 +123,9 @@ clock was set to. The card doesn't record it.
   right only if the camera's clock was set to the same one.
 - **A check against the card:** the camera files each event under its own date, so the conversion
   warns when the time zone puts events on other days than the card does. `crittervid doctor` shows
-  what's saved for the output folder.
+  the time zone and clock offset saved for the output folder.
 - **A broken `deployment.json`** (or an unknown time zone) stops the run with an error, rather
-  than grouping days some other way.
+  than grouping days some other way. To unset a saved value, edit or delete that file.
 - **Privacy:** the site and camera aren't written into the videos. They are in
   `deployment.json` and the run logs, so leave those out of copies you share if the site is
   sensitive.

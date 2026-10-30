@@ -18,6 +18,7 @@ from . import log
 FILE_NAME = 'deployment.json'
 SCHEMA = 1
 FIELDS = ('timezone', 'clock_offset', 'site', 'camera')
+MAX_CLOCK_OFFSET = 10 * 366 * 86400   # seconds: a clock more than 10 years out wasn't set (#73)
 LABELS = {'timezone': 'time zone', 'clock_offset': 'clock offset', 'site': 'site', 'camera': 'camera'}
 
 _log = log.get('run')
@@ -47,7 +48,7 @@ def options(config):
     for name in FIELDS:
         value = getattr(config, name)
         if value is not None:
-            args += [f"--{name.replace('_', '-')}", str(value)]
+            args.append(f"--{name.replace('_', '-')}={value}")
     return args
 
 
@@ -64,6 +65,13 @@ def zone(name):
     if name not in known_zones():
         raise Invalid(f"unknown time zone '{name}': use an IANA name such as Europe/Vilnius or America/New_York")
     return ZoneInfo(name)
+
+
+def check_offset(seconds, where=''):
+    """Invalid for a clock offset too big to be a wrong clock."""
+    if abs(seconds) > MAX_CLOCK_OFFSET:
+        raise Invalid(f"{where}a clock offset of {seconds} s is more than 10 years; a camera whose clock "
+                      f"wasn't set is handled separately")
 
 
 def path(config):
@@ -95,6 +103,7 @@ def read(config):
         if name == 'clock_offset':
             if not isinstance(value, int) or isinstance(value, bool):
                 raise Invalid(f"{file}: the clock offset must be a whole number of seconds, not {value!r}")
+            check_offset(value, f"{file}: ")
         elif not isinstance(value, str):
             raise Invalid(f"{file}: the {LABELS[name]} must be text, not {value!r}")
         if name == 'timezone':
@@ -150,6 +159,8 @@ def settle(config, save):
         return config
     if config.timezone is not None:
         zone(config.timezone)   # an unknown name stops the run before anything is written
+    if config.clock_offset is not None:
+        check_offset(config.clock_offset)
     saved = read(config)
     given = {name: getattr(config, name) for name in FIELDS if getattr(config, name) is not None}
     values = {**saved, **given}

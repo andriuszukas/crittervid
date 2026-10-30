@@ -7,7 +7,7 @@ from tkinter import Tk, filedialog
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from crittervid import deployment  # noqa: E402
 from crittervid.config import PipelineConfig  # noqa: E402
-from crittervid.log import read_first_line  # noqa: E402
+from crittervid.log import command_line, read_first_line  # noqa: E402
 
 NO_TIME_ZONE = "Not set (this computer's)"
 
@@ -72,8 +72,8 @@ with st.expander("📖 Help & Instructions"):
     ### Camera and Site
     - **Camera's time zone** - The time zone the camera's clock was set to. Footage is grouped into the camera's days; without it, this computer's time zone is used, and footage can land on the wrong day. If it doesn't fit the card, the run warns
     - **Clock offset** - Seconds to add to the camera's times if its clock was wrong
-    - **Site** and **Camera** - Saved with the outputs for later exports, not written into the videos
-    - All four are saved in `deployment.json` in the output folder and filled in again next time. Leave that file and the logs out of copies you share if the site is sensitive
+    - **Site** and **Camera** - Kept with the outputs, not written into the videos
+    - All four are saved in `deployment.json` in the output folder and filled in again next time. A saved time zone can be changed but not unset, and emptying Site or Camera keeps the saved one; edit or delete `deployment.json` for that. Leave that file and the logs out of copies you share if the site is sensitive
 
     ### Settings Explained
     - **Number of videos to process in parallel** - Higher = faster but uses more RAM (4 is a good default)
@@ -149,8 +149,10 @@ try:
     saved = deployment.read(PipelineConfig(output_dir=output_dir or "output"))
 except deployment.Invalid as e:
     saved_problem = str(e)
-if st.session_state.get("deployment_for") != output_dir:
-    st.session_state["deployment_for"] = output_dir
+# Compared as absolute paths, so writing the same folder another way keeps edits
+folder_key = os.path.abspath(output_dir or "output")
+if st.session_state.get("deployment_for") != folder_key:
+    st.session_state["deployment_for"] = folder_key
     st.session_state["timezone"] = saved.get("timezone", NO_TIME_ZONE)
     st.session_state["clock_offset"] = saved.get("clock_offset", 0)
     st.session_state["site"] = saved.get("site", "")
@@ -162,21 +164,25 @@ elif saved:
                f"changes are saved there when you run.")
 else:
     st.caption("Saved in the output folder when you run, for later runs.")
-timezone = st.selectbox("Camera's time zone", [NO_TIME_ZONE] + sorted(deployment.known_zones()), key="timezone",
+# Once one is saved, it can be changed but not unset (edit or delete deployment.json for that)
+zone_choices = ([] if "timezone" in saved else [NO_TIME_ZONE]) + sorted(deployment.known_zones())
+timezone = st.selectbox("Camera's time zone", zone_choices, key="timezone",
                         help="The time zone the camera's clock was set to, such as Europe/Vilnius. Footage is "
                              "grouped into the camera's days, so set this when the computer is in another time zone. "
                              "Type to search.")
 if timezone == NO_TIME_ZONE:
     st.warning("No time zone set: days are grouped in this computer's time zone. If the camera's clock was set "
                "to another one, choose it.")
-clock_offset = st.number_input("Clock offset (seconds)", min_value=-10 * 365 * 86400, max_value=10 * 365 * 86400,
+clock_offset = st.number_input("Clock offset (seconds)", min_value=-deployment.MAX_CLOCK_OFFSET,
+                               max_value=deployment.MAX_CLOCK_OFFSET,
                                step=1, key="clock_offset",
                                help="Seconds to add to the camera's times if its clock was wrong, such as 75 if it "
                                     "was 75 s slow, or -3600 if it was an hour fast. Merged files get the corrected "
                                     "times; converted files keep the camera's own.")
 site = st.text_input("Site", key="site", help="Where the camera was. Saved with the outputs (deployment.json and "
-                                               "the logs), not in the videos.")
-camera = st.text_input("Camera", key="camera", help="Which camera it was. Saved with the outputs, not in the videos.")
+                                               "the logs), not in the videos. Emptying it keeps the saved one.")
+camera = st.text_input("Camera", key="camera", help="Which camera it was. Saved with the outputs, not in the videos. "
+                                                   "Emptying it keeps the saved one.")
 
 st.header("Pipeline Parameters")
 accel_display = st.selectbox("Hardware Acceleration", ["Auto", "CPU", "NVIDIA", "Intel", "AMD"], help="Select hardware acceleration method. NVidia GPUs are the best.", index=0)
@@ -206,16 +212,17 @@ if st.button("Run"):
         cmd.append("--force-merge")
     if not validate:
         cmd.append("--no-validate")
+    # --name=value, so a value starting with '-' isn't taken for an option
     if timezone != NO_TIME_ZONE:
-        cmd += ["--timezone", timezone]
+        cmd.append(f"--timezone={timezone}")
     if clock_offset or "clock_offset" in saved:
-        cmd += ["--clock-offset", str(int(clock_offset))]
+        cmd.append(f"--clock-offset={int(clock_offset)}")
     if site.strip():
-        cmd += ["--site", site.strip()]
+        cmd.append(f"--site={site.strip()}")
     if camera.strip():
-        cmd += ["--camera", camera.strip()]
+        cmd.append(f"--camera={camera.strip()}")
 
-    st.write(f"Running: {' '.join(cmd)}")
+    st.write(f"Running: {command_line(cmd)}")
 
     # Create placeholders for progress and output
     progress_placeholder = st.empty()

@@ -18,6 +18,7 @@ except ImportError:
     AppTest = None
 
 RUN_TIMEOUT = 60
+NO_TIME_ZONE = "Not set (this computer's)"
 
 
 @pytest.fixture
@@ -119,3 +120,36 @@ def test_gui_warns_without_a_time_zone_and_shows_a_broken_file(gui, ws):
     at = gui.text_input[1].input(str(ws.root / 'output')).run()
 
     assert any("can't be read" in e.value for e in at.error)
+
+
+def run_command(at):
+    """The command line the Running: line shows."""
+    [line] = [m.value for m in at.markdown if str(m.value).startswith('Running: ')]
+    return line
+
+
+def test_gui_passes_the_details_and_can_reset_a_saved_offset(gui, ws):
+    (ws.root / 'output').mkdir()
+    (ws.root / 'output' / 'deployment.json').write_text(
+        '{"schema": 1, "timezone": "UTC", "clock_offset": 75}', encoding='utf-8')
+    gui.text_input[1].input(str(ws.root / 'output')).run()
+    assert NO_TIME_ZONE not in gui.selectbox(key='timezone').options   # saved: change it, not unset it
+    gui.number_input(key='clock_offset').set_value(0)
+    gui.text_input(key='camera').input('-Cam 2')   # starts like an option
+
+    at = [b for b in gui.button if b.label == 'Run'][0].click().run(timeout=RUN_TIMEOUT)
+
+    assert '--clock-offset=0' in run_command(at) and '--timezone=UTC' in run_command(at)
+    saved = json.loads((ws.root / 'output' / 'deployment.json').read_text(encoding='utf-8'))
+    assert saved['clock_offset'] == 0 and saved['camera'] == '-Cam 2'
+
+
+def test_gui_shows_an_out_of_range_saved_offset_as_an_error(gui, ws):
+    (ws.root / 'output').mkdir()
+    (ws.root / 'output' / 'deployment.json').write_text(
+        '{"schema": 1, "clock_offset": 999999999}', encoding='utf-8')
+
+    at = gui.text_input[1].input(str(ws.root / 'output')).run()
+
+    assert not at.exception
+    assert any('more than 10 years' in e.value for e in at.error)
