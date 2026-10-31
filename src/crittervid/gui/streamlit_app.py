@@ -199,15 +199,14 @@ def find_series(card, output):
     for folder, _, files in os.walk(card):
         if any(name.endswith(".media") for name in files):
             events.append(Path(os.path.basename(folder) + ".mp4"))
-    merged = os.path.join(output, "merged")
-    for folder, _, files in os.walk(output):
-        if not os.path.abspath(folder).startswith(os.path.abspath(merged)):
-            events += [Path(folder, name) for name in files if name.endswith(".mp4")]
+    for folder, _, files in os.walk(output):   # merged files' names never match an event's
+        events += [Path(folder, name) for name in files if name.endswith(".mp4")]
     return [(name, len(found), max(s + n for s, n, _ in found) - found[0][0])
             for name, found in names.find_series(events)]
 
 
 series_starts = []   # --series-start values for the run
+series_problem = False   # a start it can't use: the run would stop on it
 found_series = find_series(input_dir or "input/DCIM", output_dir or "output")
 if found_series:
     st.subheader("Recorded before the camera's clock was set")
@@ -226,6 +225,7 @@ if found_series:
                 deployment.resolve_start(name, when.strip(), None if timezone == NO_TIME_ZONE else timezone)
             except deployment.Invalid as e:
                 st.error(str(e))
+                series_problem = True
             series_starts.append(f"{name}={when.strip()}")
 
 st.header("Pipeline Parameters")
@@ -236,7 +236,10 @@ force_merge = st.checkbox("Merge everything again", help="Merged files whose eve
 validate = st.checkbox("Validate output after processing", help="Check that the outputs have video and audio of the right length and that merged days are complete. Takes seconds.", value=True)
 
 st.header("Run Pipeline")
-if st.button("Run"):
+run_clicked = st.button("Run")
+if run_clicked and series_problem:
+    st.error("Fix the series starts marked above first.")
+if run_clicked and not series_problem:
     # Map user-friendly names to command-line arguments
     accel_map = {"Auto": "auto", "CPU": "cpu", "NVIDIA": "cuda", "Intel": "qsv", "AMD": "amf"}
     accel = accel_map.get(accel_display, "auto")

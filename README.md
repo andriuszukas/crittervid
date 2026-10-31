@@ -161,7 +161,7 @@ is unknown, so they aren't merged into days until you say when they happened.
 - **Series:** the events from one switch-on are one series, named after its first event, such as
   `0000000001_0602`. One series can span a `2106/` and a `1970/` folder. The merge lists each
   series with no start, with its number of events and length, and the option to give it one.
-  The GUI lists them too, under "Camera and Site".
+  The GUI lists them too, under "Recorded before the camera's clock was set".
 - **Giving a start:** `--series-start 0000000001_0602=2025-06-01T14:30` (or `2025-06-01 14:30`)
   is the real start of the series' first event, in the camera's local time, which needs the time
   zone set. Add `Z` or a UTC offset such as `+02:00` to give it another way. Every event of the

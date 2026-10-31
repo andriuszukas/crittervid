@@ -193,3 +193,30 @@ def test_gui_shows_a_series_start_it_cant_use(gui, ws):
 
 def test_gui_shows_no_series_section_for_a_card_without_any(gui):
     assert not any(t.key and str(t.key).startswith('series_') for t in gui.text_input)
+
+
+def test_gui_fills_in_series_starts_again_for_another_output_folder(gui, ws):
+    add_unset_event(ws)
+    for folder, start in (('out-a', '2025-10-01T08:00:00+00:00'), ('out-b', '2025-10-02T09:00:00+00:00')):
+        (ws.root / folder).mkdir()
+        (ws.root / folder / 'deployment.json').write_text(
+            json.dumps({'schema': 2, 'timezone': 'UTC', 'series': {'0000000001_0602': start}}), encoding='utf-8')
+    gui.text_input[0].input(str(ws.root / 'input' / 'DCIM'))
+
+    at = gui.text_input[1].input(str(ws.root / 'out-a')).run()
+    assert at.text_input(key='series_0000000001_0602').value == '2025-10-01T08:00:00+00:00'
+    at.session_state['output_dir_value'] = str(ws.root / 'out-b')   # as Browse sets it
+    at = at.run()
+    assert at.text_input[1].value == str(ws.root / 'out-b')
+    assert at.text_input(key='series_0000000001_0602').value == '2025-10-02T09:00:00+00:00'
+
+
+def test_gui_doesnt_run_with_a_series_start_it_cant_use(gui, ws):
+    add_unset_event(ws)
+    at = gui.text_input[0].input(str(ws.root / 'input' / 'DCIM')).run()
+    at = at.text_input(key='series_0000000001_0602').input('2099-01-01 08:00').run()
+
+    at = [b for b in at.button if b.label == 'Run'][0].click().run(timeout=RUN_TIMEOUT)
+
+    assert any('Fix the series starts' in e.value for e in at.error)
+    assert not at.success and not (ws.root / 'output' / 'conversion_summary.txt').exists()
