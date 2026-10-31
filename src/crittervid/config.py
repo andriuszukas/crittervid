@@ -52,6 +52,10 @@ class PipelineConfig:
     clock_offset: Optional[int] = None   # seconds added to times of events whose clock was set
     site: Optional[str] = None
     camera: Optional[str] = None
+    # ((series name, its real start), ...) for series of events recorded before the
+    # camera's clock was set (decision record 0006); after settling, with the
+    # saved ones and each start as an ISO time with its UTC offset
+    series: Optional[tuple] = None
     deployment_settled: bool = field(default=False, compare=False, repr=False)
     cancel: CancelToken = field(default_factory=CancelToken, compare=False, repr=False)
 

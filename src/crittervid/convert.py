@@ -377,9 +377,6 @@ def convert_event_parallel(args):
         results = [convert_media_file(segment, local_summary, accel, local_failed, config)
                    for segment in sorted(segments)]
         success = all(results)
-    if success and not media_format.clock_was_set(int(event_dir.name.split('_')[0])):
-        report(local_summary, f"WARNING: {event_dir}: recorded before the camera's clock was set, "
-                              f"so its real time is unknown; it won't be merged with dated days")
     return local_summary, local_failed, success
 
 CARD_DAY = (4, 2, 2)   # the lengths of a card's YYYY/MM/DD folder names
@@ -414,6 +411,24 @@ def check_card_dates(event_dirs, config):
             f"card (e.g. {other[0]}); is the time zone right? Give the camera's with --timezone")
 
 
+def report_undated_series(event_dirs, config):
+    """Warn about the events recorded before the camera's clock was set whose
+    series has no real start (decision record 0006): they're converted, but the
+    merge leaves them out of days until it's given."""
+    # The series as the merge finds them: from the names of the events this run
+    # converts and of those converted already (a retry or part of a card has
+    # only some of a series' events)
+    events = [Path(d.name + '.mp4') for d in event_dirs if EVENT_FOLDER.fullmatch(d.name)]
+    if config.output_dir.is_dir():
+        events += [path for path in config.output_dir.rglob('*.mp4') if config.merged_dir not in path.parents]
+    starts = deployment.series_starts(config)
+    undated = [(name, found) for name, found in names.find_series(events) if name not in starts]
+    if undated:
+        say(f"WARNING: {sum(len(found) for _, found in undated)} events were recorded before the camera's clock "
+            f"was set, in series {', '.join(name for name, _ in undated)}; they're merged into their days once "
+            f"each series is given its real start with --series-start (the merge lists them)")
+
+
 def main(argv=None):
     log.setup_streams()   # UTF-8 on the console, also for option errors
     parser = argparse.ArgumentParser(prog='crittervid convert', description="Convert .media files to .mp4 with optional hardware acceleration.")
@@ -434,7 +449,8 @@ def main(argv=None):
     config = PipelineConfig(input_dir=args.input_dir, output_dir=args.output_dir, accel=args.accel,
                             workers=args.workers, copy=args.copy, retry_failed=args.retry_failed,
                             max_retries=args.max_retries, timezone=args.timezone,
-                            clock_offset=args.clock_offset, site=args.site, camera=args.camera)
+                            clock_offset=args.clock_offset, site=args.site, camera=args.camera,
+                            series=tuple(args.series_start) if args.series_start else None)
     log.start_run(config, 'convert', verbose=args.verbose)
     return run(config)
 
@@ -479,6 +495,7 @@ def run(config):
         media_files = list(find_media_files(config.input_dir))
         say(f"Found {len(media_files)} .media files to process.")
     check_card_dates({path.parent for path in media_files}, config)
+    report_undated_series({path.parent for path in media_files}, config)
 
     summary = []
     failed_files = []

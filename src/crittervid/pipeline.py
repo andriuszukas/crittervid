@@ -64,7 +64,8 @@ def main(argv=None):
                             splits_per_day=1 if args.splits_per_day is None else args.splits_per_day,
                             force_merge=args.force_merge, deep_validate=args.deep_validate,
                             timezone=args.timezone, clock_offset=args.clock_offset, site=args.site,
-                            camera=args.camera)
+                            camera=args.camera,
+                            series=tuple(args.series_start) if args.series_start else None)
     log.start_run(config, 'run', verbose=args.verbose, run_log=not args.dry_run)
     return run(config, validate_output=args.validate, dry_run=args.dry_run)
 

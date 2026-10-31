@@ -196,7 +196,9 @@ def check_merged_days(converted, merged, probes, config):
             found[path.parent.relative_to(config.merged_dir).as_posix()].append(path)
 
     problems = []
-    for day_start, files in sorted(names.group_files_by_day(converted, config.tz, config.clock_offset or 0).items()):
+    for day_start, files in sorted(names.group_files_by_day(
+            converted, config.tz, config.clock_offset or 0,
+            names.series_shifts(converted, deployment.series_starts(config))).items()):
         day = day_start.strftime('%Y/%m/%d')
         parts = found.pop(day, [])
         dated, files = files, [f for _, f in files]
@@ -257,7 +259,8 @@ def main(argv=None):
 
     config = PipelineConfig(output_dir=args.output_dir, workers=args.workers, deep_validate=args.deep,
                             accel=args.accel, timezone=args.timezone, clock_offset=args.clock_offset,
-                            site=args.site, camera=args.camera)
+                            site=args.site, camera=args.camera,
+                            series=tuple(args.series_start) if args.series_start else None)
     log.start_run(config, 'validate', verbose=args.verbose, run_log=False)   # it only reads the output folder
     return run(config)
 

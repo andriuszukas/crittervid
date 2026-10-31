@@ -199,7 +199,7 @@ def test_deployment_details_that_cant_be_saved_stop_the_run(ws):
     ('{not json', "can't be read"),
     ('[]', "isn't a deployment file"),
     ('{"timezone": "UTC"}', 'has no schema number'),
-    ('{"schema": 2}', 'written by a newer version'),
+    ('{"schema": 3}', 'written by a newer version'),
     ('{"schema": 1, "timezone": "Mars/Olympus_Mons"}', "unknown time zone 'Mars/Olympus_Mons'"),
     ('{"schema": 1, "clock_offset": "75"}', 'must be a whole number of seconds'),
     ('{"schema": 1, "site": 3}', 'the site must be text'),
@@ -361,7 +361,8 @@ def test_the_summary_and_the_run_log_show_the_time_zone_in_use(ws):
     [run_log] = ws.files('*.jsonl')
     records = [json.loads(line) for line in run_log.read_text(encoding='utf-8').splitlines()]
     [used] = [r for r in records if r['message'] == 'Deployment details in use']
-    assert used['settings'] == {'timezone': 'UTC', 'clock_offset': 75, 'site': None, 'camera': None}
+    assert used['settings'] == {'timezone': 'UTC', 'clock_offset': 75, 'site': None, 'camera': None,
+                                'series': []}
 
 
 def test_a_merge_stopped_while_the_offset_changes_merges_again_later(ws, fake_ffmpeg_dir, monkeypatch):

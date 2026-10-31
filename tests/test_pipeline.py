@@ -522,8 +522,8 @@ def test_events_recorded_before_the_clock_was_set_are_converted_but_not_merged(w
     result = ws.run('convert_media.py', '--accel', 'cpu')
 
     assert result.returncode == 0, result.stdout
-    warned = [line for line in result.stdout.splitlines() if "before the camera's clock was set" in line]
-    assert len(warned) == 2
+    [warned] = [line for line in result.stdout.splitlines() if "before the camera's clock was set" in line]
+    assert warned.startswith('WARNING: 2 events were recorded')   # one warning for their series (0006)
     for folder in unset:   # the footage is kept, in the card's own folders
         assert ws.files(f'{Path(folder).name}_0000.mp4')
 

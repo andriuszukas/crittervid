@@ -13,7 +13,8 @@ from . import deployment, log, media_format
 from .config import PipelineConfig
 from .ffmpeg import PATH_TEXT, get_ffmpeg_path, get_ffprobe_path, media_arg
 from .names import (FILENAME_RE, MERGED_NAME, MINUTES_PER_DAY, UNSET_CLOCK_MERGES, file_start,  # noqa: F401
-                    group_files_by_day, part_name, split_day, unset_clock_day, unset_clock_files)
+                    find_series, group_files_by_day, part_name, series_shifts, shift_of, split_day,
+                    unset_clock_day, unset_clock_files)
 
 
 # Each day's merged folder keeps a record of the converted files each merged file
@@ -52,8 +53,9 @@ def video_end(path):
 
 def up_to_date(out_path, sources, files, record, offsets, offset):
     """Whether a merged file already holds exactly these converted files: the
-    record says it was made from them, with this clock offset (which sets its
-    creation_time), and each is older than it. Strictly: some
+    record says it was made from them, with this shift of its first file's time
+    (the clock offset, or its series' shift, which sets its creation_time), and
+    each is older than it. Strictly: some
     drives keep times to only 2 s, so a file converted again just before the merge
     can show the same time; a tie costs at most a needless merge, never a stale
     file. A file replaced by hand isn't noticed."""
@@ -65,13 +67,23 @@ def up_to_date(out_path, sources, files, record, offsets, offset):
         return False
 
 
-def merge_group(start, end, files, summary, record, offsets, k, n, config):
+def creation_time(path, shift):
+    """FFmpeg options for a merged file's creation_time, from its first file: its
+    camera time with the clock offset, or with its series' shift."""
+    seconds = file_start(path)
+    if media_format.clock_was_set(seconds):
+        return media_format.creation_time_args(seconds, shift)
+    return media_format.creation_time_args(seconds + shift)
+
+
+def merge_group(start, end, files, summary, record, offsets, k, n, config, shifts=None):
     out_dir = config.merged_dir / start.strftime('%Y/%m/%d')
     out_dir.mkdir(parents=True, exist_ok=True)
     out_name = part_name(start, end, k, n)
     out_path = out_dir / out_name
     sources = [source_name(f, config) for _, f in files]
-    offset = config.clock_offset or 0
+    # What's added to the first file's camera time: its creation_time depends on it
+    offset = shift_of(files[0][1], config.clock_offset or 0, shifts)
     if not config.force_merge and up_to_date(out_path, sources, files, record, offsets, offset):
         msg = f"SKIPPED: {out_path} is up to date ({len(files)} files)"
         say(msg, file=str(out_path))
@@ -108,7 +120,7 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config):
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
     cmd = [get_ffmpeg_path(), '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac',
-           *media_format.creation_time_args(file_start(files[0][1]), offset), '-f', 'mp4', media_arg(tmp_path)]
+           *creation_time(files[0][1], offset), '-f', 'mp4', media_arg(tmp_path)]
     started = time.monotonic()
     _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(out_path)})
     result = subprocess.run(cmd, capture_output=True)
@@ -177,8 +189,9 @@ def source_name(path, config):
     return Path(os.path.relpath(path, config.output_dir)).as_posix()
 
 
-# The record's key for {merged file name: clock offset it was made with}, for
-# files made with one; not a file name, which versions without it skip
+# The record's key for {merged file name: what was added to its first file's
+# camera time (the clock offset, or a series' shift)}, for files made with one;
+# not a file name, which versions without it skip
 OFFSETS_KEY = '#clock_offsets'
 
 
@@ -278,6 +291,47 @@ def remove_stale_merges(day_dir, written, summary, day_files, record, config):
     for name in [name for name in record if not (day_dir / name).is_file()]:
         del record[name]
 
+def _length(seconds):
+    hours, rest = divmod(seconds, 3600)
+    return f"{hours} h {rest // 60:02d} min" if hours else f"{rest // 60} min"
+
+
+def report_series(series, shifts, groups, warn, config):
+    """Warn about the series of events recorded before the camera's clock was set
+    (decision record 0006): each one without a real start (not merged), with the
+    option that gives it one; a start given for a series that isn't there; and
+    a dated series overlapping other footage, as a camera records one thing at
+    a time."""
+    starts = deployment.series_starts(config)
+    names_found = {name for name, _ in series}
+    undated = [(name, events) for name, events in series if name not in starts]
+    if undated:
+        lines = [f"  {name}: {len(events)} events, {_length(max(s + n for s, n, _ in events) - events[0][0])}: "
+                 f"--series-start {name}=<when it started>" for name, events in undated]
+        warn(f"{sum(len(events) for _, events in undated)} events weren't merged: they were recorded before the "
+             f"camera's clock was set, so their real time is unknown. Give each series the real start of its first "
+             f"event (the camera's local time) to merge them into their days:\n" + '\n'.join(lines))
+    if undated and len(series) > 1:
+        warn(f"the camera was powered up {len(series)} times before its clock was set, and their events overlap "
+             f"by the camera's clock, so a series may hold events of another power-up; check them before giving "
+             f"their starts")
+    for name in sorted(set(starts) - names_found):
+        warn(f"a start is saved for series {name}, but none of the converted files belong to it")
+    dated = sorted((day_start.timestamp(), files) for day_start, files in groups.items())
+    for name, events in series:
+        if name not in starts:
+            continue
+        shift = shifts[events[0][2]]
+        begin, end = events[0][0] + shift, max(s + n for s, n, _ in events) + shift
+        # Other recordings that run into the series' span, by their events' lengths
+        clashes = {f for _, files in dated for t, f in files
+                   if t.timestamp() < end and t.timestamp() + int(FILENAME_RE.search(str(f)).group(2)) > begin
+                   and shift_of(f, config.clock_offset or 0, shifts) != shift}
+        if clashes:
+            warn(f"series {name}, as dated, overlaps {len(clashes)} other recordings (such as {min(clashes)}); "
+                 f"the camera records one thing at a time, so is its start right?")
+
+
 def report_regrouped_days(groups, mp4_files, warn, config):
     """Warn about merged days that have no events now, although every converted
     file they were made from is still there: the time zone or clock offset
@@ -315,7 +369,8 @@ def main(argv=None):
 
     # Update global paths based on arguments
     config = PipelineConfig(output_dir=args.output_dir, splits_per_day=args.splits_per_day, force_merge=args.force,
-                            timezone=args.timezone, clock_offset=args.clock_offset, site=args.site, camera=args.camera)
+                            timezone=args.timezone, clock_offset=args.clock_offset, site=args.site, camera=args.camera,
+                            series=tuple(args.series_start) if args.series_start else None)
     log.start_run(config, 'merge', verbose=args.verbose)
     return run(config)
 
@@ -335,7 +390,9 @@ def run(config):
         return 2
 
     mp4_files = list(find_mp4_files(config.output_dir))
-    groups = group_files_by_day(mp4_files, config.tz, config.clock_offset or 0)
+    series = find_series(mp4_files)
+    shifts = series_shifts(mp4_files, deployment.series_starts(config))
+    groups = group_files_by_day(mp4_files, config.tz, config.clock_offset or 0, shifts)
     summary = []
     failed = 0
     def warn(msg):
@@ -347,11 +404,7 @@ def run(config):
     if unknown:
         warn(f"{len(unknown)} .mp4 files weren't merged: their names aren't ones the converter writes "
              f"(<start time>_<length>[_<offset>].mp4), e.g. {unknown[0]}")
-    unset = sorted(unset_clock_files(mp4_files))
-    if unset:
-        events = {FILENAME_RE.search(str(f)).group(1) for f in unset}
-        warn(f"{len(events)} events weren't merged: they were recorded before the camera's "
-             f"clock was set, so their real time is unknown (e.g. {unset[0]})")
+    report_series(series, shifts, groups, warn, config)
     # Earlier versions merged such events into a day of their own; say so rather
     # than delete it, as the record that would show what it holds doesn't exist
     for day_dir in sorted(config.merged_dir.glob('*/*/*')):
@@ -370,7 +423,7 @@ def run(config):
         for k, start, end, split_files in split_day(day_start, files, n, config.tz):
             if not split_files:
                 continue
-            out_path = merge_group(start, end, split_files, summary, record, offsets, k, n, config)
+            out_path = merge_group(start, end, split_files, summary, record, offsets, k, n, config, shifts)
             if out_path:
                 written.add(out_path)
             else:
