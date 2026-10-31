@@ -128,6 +128,9 @@ In the GUI, choose under **Hardware Acceleration**; on the command line, use `--
 ### Footage lands on the wrong day, or "events fall on a different day than on the card"
 Set the camera's time zone: "Camera's time zone" in the GUI, or `--timezone` (such as `--timezone Europe/Vilnius`). Without it, days follow this computer's time zone. If the camera's clock was wrong, set the clock offset too. Both are saved in `deployment.json` in the output folder; see the README's "Camera time zone and other details".
 
+### "events weren't merged: they were recorded before the camera's clock was set"
+The camera's clock wasn't set when it recorded them, so their days are unknown. The merge lists each series of such events; give each one the real start of its first event, in the camera's local time: under "Recorded before the camera's clock was set" in the GUI, or with `--series-start NAME=TIME`. See the README's "Events recorded before the camera's clock was set".
+
 ### "deployment.json can't be read", or "unknown time zone"
 The output folder's `deployment.json` is broken, or names a time zone that doesn't exist. Fix it (it's a small JSON file) or delete it and give the details again. Time zone names are IANA names such as `Europe/London`, spelt exactly.
 

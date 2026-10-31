@@ -5,7 +5,9 @@ import sys
 from tkinter import Tk, filedialog
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from crittervid import deployment  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from crittervid import deployment, names  # noqa: E402
 from crittervid.config import PipelineConfig  # noqa: E402
 from crittervid.log import command_line, read_first_line  # noqa: E402
 
@@ -73,7 +75,8 @@ with st.expander("📖 Help & Instructions"):
     - **Camera's time zone** - The time zone the camera's clock was set to. Footage is grouped into the camera's days; without it, this computer's time zone is used, and footage can land on the wrong day. If it doesn't fit the card, the run warns
     - **Clock offset** - Seconds to add to the camera's times if its clock was wrong
     - **Site** and **Camera** - Kept with the outputs, not written into the videos
-    - All four are saved in `deployment.json` in the output folder and filled in again next time. A saved time zone can be changed but not unset, and emptying Site or Camera keeps the saved one; edit or delete `deployment.json` for that. Leave that file and the logs out of copies you share if the site is sensitive
+    - **Recorded before the camera's clock was set** - Shown when the card has events whose times count from when the camera was switched on. Give the real start of each series' first event, in the camera's local time, to merge them into their days
+    - All of these are saved in `deployment.json` in the output folder and filled in again next time. A saved time zone can be changed but not unset, and emptying Site or Camera keeps the saved one; edit or delete `deployment.json` for that. Leave that file and the logs out of copies you share if the site is sensitive
 
     ### Settings Explained
     - **Number of videos to process in parallel** - Higher = faster but uses more RAM (4 is a good default)
@@ -153,6 +156,8 @@ except deployment.Invalid as e:
 folder_key = os.path.abspath(output_dir or "output")
 if st.session_state.get("deployment_for") != folder_key:
     st.session_state["deployment_for"] = folder_key
+    for key in [key for key in st.session_state if str(key).startswith("series_")]:
+        del st.session_state[key]   # filled in again below, from this folder's file
     st.session_state["timezone"] = saved.get("timezone", NO_TIME_ZONE)
     st.session_state["clock_offset"] = saved.get("clock_offset", 0)
     st.session_state["site"] = saved.get("site", "")
@@ -184,6 +189,45 @@ site = st.text_input("Site", key="site", help="Where the camera was. Saved with 
 camera = st.text_input("Camera", key="camera", help="Which camera it was. Saved with the outputs, not in the videos. "
                                                    "Emptying it keeps the saved one.")
 
+
+@st.cache_data(ttl=30, show_spinner=False)
+def find_series(card, output):
+    """The series of events recorded before the camera's clock was set (decision
+    record 0006), as the merge finds them: from the card's event folders and the
+    files converted already. [(name, events, length in seconds)]."""
+    events = []
+    for folder, _, files in os.walk(card):
+        if any(name.endswith(".media") for name in files):
+            events.append(Path(os.path.basename(folder) + ".mp4"))
+    for folder, _, files in os.walk(output):   # merged files' names never match an event's
+        events += [Path(folder, name) for name in files if name.endswith(".mp4")]
+    return [(name, len(found), max(s + n for s, n, _ in found) - found[0][0])
+            for name, found in names.find_series(events)]
+
+
+series_starts = []   # --series-start values for the run
+series_problem = False   # a start it can't use: the run would stop on it
+found_series = find_series(input_dir or "input/DCIM", output_dir or "output")
+if found_series:
+    st.subheader("Recorded before the camera's clock was set")
+    st.caption("These events' times count from when the camera was switched on, so their days are unknown. "
+               "Give the real start of each series' first event (the camera's local time, such as "
+               "2025-06-01 14:30) to merge them into their days; until then they're converted but not merged.")
+    for name, count, length in found_series:
+        key = f"series_{name}"
+        if key not in st.session_state:
+            st.session_state[key] = saved.get("series", {}).get(name, "")
+        hours, minutes = divmod(length // 60, 60)
+        when = st.text_input(f"Series {name}: {count} events, {hours} h {minutes:02d} min", key=key,
+                             placeholder="When its first event started, such as 2025-06-01 14:30")
+        if when.strip():
+            try:
+                deployment.resolve_start(name, when.strip(), None if timezone == NO_TIME_ZONE else timezone)
+            except deployment.Invalid as e:
+                st.error(str(e))
+                series_problem = True
+            series_starts.append(f"{name}={when.strip()}")
+
 st.header("Pipeline Parameters")
 accel_display = st.selectbox("Hardware Acceleration", ["Auto", "CPU", "NVIDIA", "Intel", "AMD"], help="Select hardware acceleration method. NVidia GPUs are the best.", index=0)
 workers = st.number_input("Number of videos to process in parallel", min_value=1, max_value=32, value=4, help="Number of videos to process in parallel.")
@@ -192,7 +236,10 @@ force_merge = st.checkbox("Merge everything again", help="Merged files whose eve
 validate = st.checkbox("Validate output after processing", help="Check that the outputs have video and audio of the right length and that merged days are complete. Takes seconds.", value=True)
 
 st.header("Run Pipeline")
-if st.button("Run"):
+run_clicked = st.button("Run")
+if run_clicked and series_problem:
+    st.error("Fix the series starts marked above first.")
+if run_clicked and not series_problem:
     # Map user-friendly names to command-line arguments
     accel_map = {"Auto": "auto", "CPU": "cpu", "NVIDIA": "cuda", "Intel": "qsv", "AMD": "amf"}
     accel = accel_map.get(accel_display, "auto")
@@ -221,6 +268,7 @@ if st.button("Run"):
         cmd.append(f"--site={site.strip()}")
     if camera.strip():
         cmd.append(f"--camera={camera.strip()}")
+    cmd += [f"--series-start={start}" for start in series_starts]
 
     st.write(f"Running: {command_line(cmd)}")
 
