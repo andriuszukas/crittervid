@@ -153,3 +153,43 @@ def test_gui_shows_an_out_of_range_saved_offset_as_an_error(gui, ws):
 
     assert not at.exception
     assert any('more than 10 years' in e.value for e in at.error)
+
+
+
+def add_unset_event(ws):
+    path = ws.root / 'input' / 'DCIM' / '2106' / '02' / '07' / '0000000001_0602' / '0001.media'
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'good')
+
+
+def test_gui_lists_a_series_and_passes_its_start(gui, ws):
+    add_unset_event(ws)
+    gui.text_input[0].input(str(ws.root / 'input' / 'DCIM'))
+    at = gui.text_input[1].input(str(ws.root / 'output')).run()
+    at = at.selectbox(key='timezone').select('UTC').run()
+
+    [field] = [t for t in at.text_input if t.key == 'series_0000000001_0602']
+    assert field.label == 'Series 0000000001_0602: 1 events, 0 h 10 min'
+    field.input('2025-10-01 08:00')
+    at.selectbox[1].select('CPU')
+    at = [b for b in at.button if b.label == 'Run'][0].click().run(timeout=RUN_TIMEOUT)
+
+    assert not at.exception
+    assert [s.value for s in at.success] == ['✅ Pipeline completed successfully!']
+    saved = json.loads((ws.root / 'output' / 'deployment.json').read_text(encoding='utf-8'))
+    assert saved['series'] == {'0000000001_0602': '2025-10-01T08:00:00+00:00'}
+    assert list((ws.root / 'output' / 'merged' / '2025' / '10' / '01').glob('merged_*.mp4'))
+
+
+def test_gui_shows_a_series_start_it_cant_use(gui, ws):
+    add_unset_event(ws)
+    at = gui.text_input[0].input(str(ws.root / 'input' / 'DCIM')).run()
+
+    [field] = [t for t in at.text_input if t.key == 'series_0000000001_0602']
+    at = field.input('2025-10-01 08:00').run()   # no time zone chosen
+
+    assert any('no time zone is set' in e.value for e in at.error)
+
+
+def test_gui_shows_no_series_section_for_a_card_without_any(gui):
+    assert not any(t.key and str(t.key).startswith('series_') for t in gui.text_input)
