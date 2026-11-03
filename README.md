@@ -178,7 +178,8 @@ Merged files also get a chapter for each event, named by its local start time, f
 rows: players such as VLC list them and jump between events. `--no-chapters` (with `crittervid
 run` or `merge`; a checkbox in the GUI) leaves them out. Files merged before keep what they have;
 merge with `--force` to remake them with chapters. Without ffprobe there are no chapters, as the
-positions aren't known.
+positions aren't known. Some players read only the first 255 chapters of a file; the event index
+lists every event.
 
 ### Events recorded before the camera's clock was set
 

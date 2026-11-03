@@ -191,7 +191,12 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config, shift
     if config.chapters:
         chapters = index.to_chapters(index_rows(files, spans, config, shifts))
         if chapters:
-            chapters_path.write_text(chapters, encoding='utf-8')
+            try:
+                chapters_path.write_text(chapters, encoding='utf-8')
+            except OSError as e:   # the merged file is still worth making, without chapters
+                say(f"WARNING: couldn't write the chapters for {out_name} ({e}); merging it without them",
+                    file=str(out_path))
+                chapters = None
     chapter_args = ['-f', 'ffmetadata', '-i', media_arg(chapters_path), '-map_chapters', '1'] if chapters else []
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
@@ -200,10 +205,15 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config, shift
            *creation_time(files[0][1], offset), '-f', 'mp4', media_arg(tmp_path)]
     started = time.monotonic()
     _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(out_path)})
-    result = subprocess.run(cmd, capture_output=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True)
+    finally:   # also when the run is stopped
+        for temporary in (filelist_path, chapters_path):
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
     took = {'file': str(out_path), 'duration_s': round(time.monotonic() - started, 3)}
-    filelist_path.unlink()
-    chapters_path.unlink(missing_ok=True)
     if result.returncode != 0:
         tmp_path.unlink(missing_ok=True)
         last, tail = log.ffmpeg_failure(result.stderr)
