@@ -22,7 +22,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import deployment, log, names
+from . import deployment, index, log, names
 from .config import ACCEL_CHOICES, PipelineConfig
 from .ffmpeg import get_ffmpeg_path, get_ffprobe_path, media_arg
 
@@ -187,6 +187,39 @@ def check_merged_part(label, part, sources, probes):
     return problems
 
 
+def check_index(part, files, probes, config, shifts):
+    """Compare a merged file's event index (decision record 0007), the public
+    document, with the converted files the merged file holds: the same files in
+    the same order, starting when they did, and adding up to its length. A
+    missing or wrong index is a warning: the next merge writes it again."""
+    path = index.path_for(part)
+    again = 'the next merge writes it again'
+    try:
+        rows = index.read_csv(path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return [f'WARNING: {part}: no event index ({path.name}); the next merge writes it']
+    except (OSError, UnicodeDecodeError, index.IndexFormatError) as e:
+        return [f"WARNING: {path} can't be read ({e}); {again}"]
+    expected = [Path(os.path.relpath(f, config.output_dir)).as_posix() for f in files]
+    if [row['filePath'] for row in rows] != expected:
+        return [f"WARNING: {path} doesn't list the merged file's events in order; {again}"]
+    offset = config.clock_offset or 0
+    for row, f in zip(rows, files):
+        start = names.file_start(f) + names.shift_of(f, offset, shifts)
+        if abs(row['eventStart'].timestamp() - start) > 1:
+            return [f'WARNING: {path}: {row["filePath"]} started at {names.local_time(start, config.tz).isoformat()}, '
+                    f'not {row["eventStart"].isoformat()}; {again}']
+    durations = [row['durationSeconds'] for row in rows]
+    if None not in durations and (row := index.misplaced(rows)):
+        return [f"WARNING: {path}: {row['filePath']} doesn't start where the event before it ends; {again}"]
+    if None not in durations and 'video' in probes[part].streams:
+        length = probes[part].streams['video'][1]
+        if abs(sum(durations) - length) > MERGED_TOLERANCE_S + MERGED_TOLERANCE_PER_FILE_S * len(rows):
+            return [f'WARNING: {path}: its events add up to {sum(durations):.2f} s, but the merged file is '
+                    f'{length:.2f} s long; {again}']
+    return []
+
+
 def check_merged_days(converted, merged, probes, config):
     """Compare each merged file with the converted files it was made from,
     grouped and split the same way the merge step does it."""
@@ -196,9 +229,9 @@ def check_merged_days(converted, merged, probes, config):
             found[path.parent.relative_to(config.merged_dir).as_posix()].append(path)
 
     problems = []
+    shifts = names.series_shifts(converted, deployment.series_starts(config))
     for day_start, files in sorted(names.group_files_by_day(
-            converted, config.tz, config.clock_offset or 0,
-            names.series_shifts(converted, deployment.series_starts(config))).items()):
+            converted, config.tz, config.clock_offset or 0, shifts).items()):
         day = day_start.strftime('%Y/%m/%d')
         parts = found.pop(day, [])
         dated, files = files, [f for _, f in files]
@@ -234,6 +267,7 @@ def check_merged_days(converted, merged, probes, config):
                                         f'not the times in its name (made by an earlier version? merge again)')
                     problems += check_merged_part(f'merged {day} part {k} of {n}', part,
                                                   [probes[f] for f in chunk], probes)
+                    problems += check_index(part, chunk, probes, config, shifts)
             problems += [f'WARNING: {part}: part {k} of {n} is not a part the merge writes'
                          for k, part in sorted(set_parts.items()) if not 1 <= k <= n]
     for day in sorted(found):

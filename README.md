@@ -137,6 +137,7 @@ clock was set to. The card doesn't record it.
 output/
   YYYY/MM/DD/<timestamp>_<duration>.mp4    # one file per recorded event
   merged/YYYY/MM/DD/merged_*.mp4           # merged daily clips, in the camera's days
+  merged/YYYY/MM/DD/merged_*.events.csv     # where each event is in a merged clip
   merged/YYYY/MM/DD/merged_contents.json    # which events each merged clip holds
   deployment.json                          # the camera's time zone and other details
   conversion_summary.txt                   # per-run reports
@@ -151,6 +152,27 @@ versions get it once they're made again (convert after deleting them; merge with
 folders in which no file is in the cameras' record format are converted one segment at a time
 instead, into `YYYY/MM/DD/<timestamp>_<duration>/` folders. An event file isn't redone if more
 segments are added to its folder later; delete it to convert the event again.
+
+### Where each event is in a merged file
+
+A merged file joins its events back to back, without the gaps between them, so a position in it
+doesn't tell you the real time. Next to each one, `merged_….events.csv` lists its events in the
+order they play, one row each:
+
+| Column | Meaning |
+|---|---|
+| `eventStart` | when it started: ISO 8601 with its UTC offset, in the camera's time zone, after any clock offset or series start |
+| `offsetSeconds` | where it starts in the merged file, in seconds (about ±20 ms) |
+| `durationSeconds` | how long it plays there |
+| `filePath` | the converted file, relative to the output folder |
+| `shiftSeconds` | what was added to the camera's time (the clock offset, or a series' shift) |
+
+The columns are described by a Table Schema, [docs/schemas/event-index.json](docs/schemas/event-index.json),
+the standard Camtrap DP uses. Without ffprobe, `offsetSeconds` and `durationSeconds` are left
+empty, because the lengths aren't known; the next merge with ffprobe fills them in. A changed time
+zone, clock offset or series start rewrites the indexes it affects. Merged files made by earlier versions get their index
+on the next merge, without being merged again. Validation checks each index against its merged
+file ([decision record 0007](docs/decisions/0007-event-index.md)).
 
 ### Events recorded before the camera's clock was set
 

@@ -9,11 +9,11 @@ import re
 import argparse
 import sys
 import time
-from . import deployment, log, media_format
+from . import deployment, index, log, media_format
 from .config import PipelineConfig
 from .ffmpeg import PATH_TEXT, get_ffmpeg_path, get_ffprobe_path, media_arg
 from .names import (FILENAME_RE, MERGED_NAME, MINUTES_PER_DAY, UNSET_CLOCK_MERGES, file_start,  # noqa: F401
-                    find_series, group_files_by_day, part_name, series_shifts, shift_of, split_day,
+                    find_series, group_files_by_day, local_time, part_name, series_shifts, shift_of, split_day,
                     unset_clock_day, unset_clock_files)
 
 
@@ -34,11 +34,9 @@ def find_mp4_files(root):
             if filename.endswith('.mp4'):
                 yield Path(dirpath) / filename
 
-def video_end(path):
-    """When a file's video ends (its start time plus its length) in seconds, or
-    None if ffprobe isn't available or can't read it. Usually the video starts
-    at 0; when the first frame is placed later, the file still runs until then
-    plus its length."""
+def video_span(path):
+    """(start, length) of a file's video in seconds, or None if ffprobe isn't
+    available or can't read it."""
     if not get_ffprobe_path():
         return None
     result = subprocess.run([get_ffprobe_path(), '-v', 'error', '-select_streams', 'v:0',
@@ -46,9 +44,69 @@ def video_end(path):
                             capture_output=True, text=True, encoding='utf-8', errors='replace')
     try:
         start, length = (float(x) for x in result.stdout.strip().split(','))
-        return max(start, 0) + length
+        return start, length
     except ValueError:
         return None
+
+
+def video_end(path):
+    """When a file's video ends (its start time plus its length) in seconds, or
+    None if ffprobe isn't available or can't read it. Usually the video starts
+    at 0; when the first frame is placed later, the file still runs until then
+    plus its length."""
+    return _end(video_span(path))
+
+
+def _end(span):
+    return None if span is None else max(span[0], 0) + span[1]
+
+
+def write_index(out_path, files, spans, config, shifts):
+    """Write a merged file's event index (decision record 0007) next to it,
+    through a temporary file renamed into place: files are its (start, file)
+    pairs in order, spans each file's video (start, length) or None. Returns
+    whether it could be written."""
+    lead_in = max(spans[0][0], 0) if spans and spans[0] else 0
+    rows = index.build(index_events(files, config, shifts), [_end(span) for span in spans], lead_in)
+    path = index.path_for(out_path)
+    tmp = path.with_name(path.name + '.part')
+    try:
+        with open(tmp, 'w', encoding='utf-8', newline='') as f:
+            f.write(index.to_csv(rows))
+        tmp.replace(path)
+        return True
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        say(f"WARNING: couldn't write the event index {path}: {e}", file=str(out_path))
+        return False
+
+
+def index_events(files, config, shifts):
+    """The events of a merged file's (start, file) pairs as index.build takes
+    them: when each file's footage really started, its path and its shift."""
+    offset = config.clock_offset or 0
+    events = []
+    for _, f in files:
+        shift = shift_of(f, offset, shifts)
+        events.append((local_time(file_start(f) + shift, config.tz), source_name(f, config), shift))
+    return events
+
+
+def index_current(out_path, files, config, shifts):
+    """Whether a merged file's event index is current: written since the merged
+    file, in this version's format, and describing its events as they'd be
+    written now (a changed time zone, clock offset or series start changes
+    them, even when the merged file itself stays). Positions it lacks are
+    written once ffprobe can measure them. Nothing here probes, so up-to-date
+    merged files with current indexes cost no probing."""
+    path = index.path_for(out_path)
+    try:
+        if path.stat().st_mtime < out_path.stat().st_mtime:
+            return False
+        rows = index.read_csv(path.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, index.IndexFormatError):
+        return False
+    return index.describes(rows, index_events(files, config, shifts), bool(get_ffprobe_path()))
 
 
 def up_to_date(out_path, sources, files, record, offsets, offset):
@@ -88,6 +146,8 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config, shift
         msg = f"SKIPPED: {out_path} is up to date ({len(files)} files)"
         say(msg, file=str(out_path))
         summary.append(msg)
+        if not index_current(out_path, files, config, shifts):   # e.g. made by a version without indexes
+            write_index(out_path, files, [video_span(f) for _, f in files], config, shifts)
         return out_path
     # Write to a temp file and rename on success, so a failed merge never leaves
     # a broken file that looks like a finished one
@@ -104,6 +164,7 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config, shift
         return False
     # FFmpeg reads the list as UTF-8 (other bytes as they are), and a quote inside
     # a quoted path must be written as '\''
+    spans = []   # each file's video (start, length): where it's cut, and its index row
     with open(filelist_path, 'w', **PATH_TEXT) as f:
         for _, file in files:
             escaped = str(file.resolve()).replace("'", "'\\''")
@@ -114,7 +175,8 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config, shift
             # and the video's last frame has an estimated length, so the two rarely
             # end together; left to itself, FFmpeg starts the next file after one
             # or the other depending on the version, which adds up over many files
-            video_stop = video_end(file)
+            spans.append(video_span(file))
+            video_stop = _end(spans[-1])
             if video_stop:
                 f.write(f"outpoint {video_stop:.6f}\nduration {video_stop:.6f}\n")
     # Copy the video; re-encode the audio once, so the small padding at the start
@@ -180,6 +242,9 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config, shift
     success_msg = f"Merged {len(files)} files -> {out_path}"
     say(success_msg, **took)
     summary.append(f"SUCCESS: {success_msg}")
+    # After the merged file: a stop in between leaves it without an index,
+    # which the next run writes
+    write_index(out_path, files, spans, config, shifts)
     return out_path
 
 
@@ -284,12 +349,20 @@ def remove_stale_merges(day_dir, written, summary, day_files, record, config):
             except OSError as e:
                 warn(f"couldn't remove {old} (left from an earlier split setting): {e}")
                 continue
+            index.path_for(old).unlink(missing_ok=True)
             msg = f"Removed {old} (left from an earlier split setting)"
             say(msg)
             summary.append(f"REMOVED: {msg}")
-    # Forget files that are no longer there (e.g. deleted by hand)
+    # Forget files that are no longer there (e.g. deleted by hand), and their indexes
     for name in [name for name in record if not (day_dir / name).is_file()]:
         del record[name]
+    for path in day_dir.glob(f'merged_*{index.SUFFIX}'):
+        merged = path.with_name(path.name[:-len(index.SUFFIX)] + '.mp4')
+        if MERGED_NAME.fullmatch(merged.name) and not merged.exists():
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
 def _length(seconds):
     hours, rest = divmod(seconds, 3600)
@@ -405,6 +478,9 @@ def run(config):
         warn(f"{len(unknown)} .mp4 files weren't merged: their names aren't ones the converter writes "
              f"(<start time>_<length>[_<offset>].mp4), e.g. {unknown[0]}")
     report_series(series, shifts, groups, warn, config)
+    if groups and not get_ffprobe_path():
+        warn("ffprobe not found (it comes with FFmpeg): the event indexes next to the merged files say when "
+             "each event started, but not where it is in the file")
     # Earlier versions merged such events into a day of their own; say so rather
     # than delete it, as the record that would show what it holds doesn't exist
     for day_dir in sorted(config.merged_dir.glob('*/*/*')):
