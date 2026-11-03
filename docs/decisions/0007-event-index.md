@@ -1,6 +1,6 @@
 # 0007: An index of the events in each merged file
 
-- **Status:** proposed (2026-11-03)
+- **Status:** accepted (2026-11-03)
 - **Issues:** #32 (merged files lose the mapping to real time across gaps); it prepares #50 (Camtrap DP export) and #51 (Timelapse)
 - **Principles:** written against the project's dev principles ("Growing without weaving"); the last section says how
 
@@ -101,7 +101,7 @@
 - **Optional costs:** chapters can be turned off, and nothing adds a dependency. The schema check is a short hand-written test, not Frictionless, which can wait until #50 needs it. That also keeps the set of pinned inputs small.
 - **Compatibility:** an additive change. Existing outputs get indexes without being merged again, and the schema's version covers later changes.
 
-## Questions for you
+## Questions (answered: yes to all three)
 
 1. **One index per merged file, next to it (`merged_….events.csv`)?** Recommended: it travels with its video. The alternative is one index per day, covering all of that day's merged files, with a column for the merged file.
 2. **Chapters on by default, with `--no-chapters` to leave them out?** Recommended: they make long merged files easy to move around in, and they cost nothing at merge time. The alternative is off by default (`--chapters`) until they've been tried in more players.
