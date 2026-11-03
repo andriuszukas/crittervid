@@ -1,0 +1,35 @@
+{
+  "$comment": "Frictionless Table Schema of a merged file's event index, merged_<...>.events.csv (decision record 0007). The fields are the contract: readers check the CSV's header against them.",
+  "name": "event-index",
+  "title": "Events in a merged file",
+  "version": "1",
+  "fields": [
+    {
+      "name": "eventStart",
+      "type": "datetime",
+      "format": "any",
+      "description": "When the file's footage really started: ISO 8601 with its UTC offset, in the camera's time zone, after the clock offset or the series' shift."
+    },
+    {
+      "name": "offsetSeconds",
+      "type": "number",
+      "description": "Where it starts in the merged file, in seconds from the merged file's first frame; about +-20 ms. Empty if not known."
+    },
+    {
+      "name": "durationSeconds",
+      "type": "number",
+      "description": "How long it plays in the merged file, in seconds. Empty if not known."
+    },
+    {
+      "name": "filePath",
+      "type": "string",
+      "description": "The converted file, relative to the output folder, with forward slashes."
+    },
+    {
+      "name": "shiftSeconds",
+      "type": "integer",
+      "description": "Seconds added to the camera's time: the clock offset (decision record 0005), or the series' shift (decision record 0006)."
+    }
+  ],
+  "missingValues": [""]
+}

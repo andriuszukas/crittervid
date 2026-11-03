@@ -106,3 +106,20 @@ def test_segment_and_merged_files_record_when_their_footage_starts(real_ws):
     assert creation_time(real_ws.converted('0013.media')) == '2025-10-01T06:26:53.000000Z'
     [merged] = real_ws.files('merged_*.mp4')
     assert creation_time(merged) == '2025-10-01T06:26:40.000000Z'
+
+
+def test_the_event_index_matches_the_merged_file(real_ws):
+    # Decision record 0007: positions add up to the merged file's real length
+    from crittervid import index
+    make_clip(real_ws, '0000.media')
+    make_clip(real_ws, '0013.media')
+
+    assert real_ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+
+    [merged] = real_ws.files('merged_*.mp4')
+    rows = index.read_csv(index.path_for(merged).read_text(encoding='utf-8'))
+    assert [r['offsetSeconds'] for r in rows][0] == 0.0
+    out = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration',
+                          '-of', 'csv=p=0', str(merged)], capture_output=True, text=True, check=True).stdout
+    assert abs(sum(r['durationSeconds'] for r in rows) - float(out)) < 0.05
+    assert rows[1]['offsetSeconds'] == pytest.approx(rows[0]['durationSeconds'])
