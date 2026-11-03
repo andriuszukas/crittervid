@@ -210,12 +210,8 @@ def check_index(part, files, probes, config, shifts):
             return [f'WARNING: {path}: {row["filePath"]} started at {names.local_time(start, config.tz).isoformat()}, '
                     f'not {row["eventStart"].isoformat()}; {again}']
     durations = [row['durationSeconds'] for row in rows]
-    if None not in durations:
-        position = 0.0
-        for row in rows:   # each event starts where the one before ends
-            if row['offsetSeconds'] is None or abs(row['offsetSeconds'] - position) > 0.002:
-                return [f"WARNING: {path}: {row['filePath']} doesn't start where the event before it ends; {again}"]
-            position += row['durationSeconds']
+    if None not in durations and (row := index.misplaced(rows)):
+        return [f"WARNING: {path}: {row['filePath']} doesn't start where the event before it ends; {again}"]
     if None not in durations and 'video' in probes[part].streams:
         length = probes[part].streams['video'][1]
         if abs(sum(durations) - length) > MERGED_TOLERANCE_S + MERGED_TOLERANCE_PER_FILE_S * len(rows):

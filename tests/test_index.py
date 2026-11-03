@@ -341,3 +341,22 @@ def test_validation_warns_about_positions_that_dont_follow_the_lengths(ws):
     result = ws.run('validate_output.py')
 
     assert "doesn't start where the event before it ends" in result.stdout
+
+
+
+def test_positions_of_a_long_index_follow_each_other_after_rounding():
+    # Rounding each written value doesn't add up: each row is checked against the one before
+    import random
+    rng = random.Random(7)
+    lengths = [rng.uniform(5, 60) for _ in range(300)]
+    rows = index.read_csv(index.to_csv(index.build([event(i * 600) for i in range(300)], lengths, 0)))
+
+    assert index.misplaced(rows) is None
+    rows[150] = {**rows[150], 'offsetSeconds': rows[150]['offsetSeconds'] + 0.01}
+    assert index.misplaced(rows) is rows[150]
+
+
+def test_the_first_event_starts_at_the_beginning():
+    rows = index.build([event(0), event(600)], [10.0, 5.0], 0)
+
+    assert index.misplaced([{**rows[0], 'offsetSeconds': 1.0}, {**rows[1], 'offsetSeconds': 11.0}]) is not None

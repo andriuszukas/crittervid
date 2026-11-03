@@ -62,6 +62,24 @@ def describes(rows, events, lengths_known):
             and not (lengths_known and any(r['offsetSeconds'] is None for r in rows)))
 
 
+# Positions and lengths are written to the millisecond, so a position can differ
+# from the previous one plus its length by up to two half-milliseconds
+ROUNDING_S = 0.0015
+
+
+def misplaced(rows):
+    """The first row whose position isn't where the row before it ends (to the
+    rounding of the written values), or None. Each row is compared with the one
+    before, so rounding doesn't add up over a long index."""
+    for before, row in zip(rows, rows[1:]):
+        if (row['offsetSeconds'] is None or before['offsetSeconds'] is None
+                or abs(row['offsetSeconds'] - before['offsetSeconds'] - before['durationSeconds']) > ROUNDING_S):
+            return row
+    if rows and rows[0]['offsetSeconds'] not in (None, 0):
+        return rows[0]
+    return None
+
+
 def _seconds(value):
     return '' if value is None else f'{value:.3f}'
 
