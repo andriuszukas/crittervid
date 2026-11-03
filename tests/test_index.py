@@ -251,7 +251,6 @@ def test_validation_doesnt_take_an_index_for_an_unknown_file(ws):
     assert 'WARNING' not in result.stdout, result.stdout
 
 
-
 def test_a_changed_time_zone_rewrites_an_index_whose_merged_file_stays(ws):
     ws.add_media('0001.media', b'morning')
     ws.add_afternoon_media('0001.media', b'afternoon')
@@ -341,7 +340,6 @@ def test_validation_warns_about_positions_that_dont_follow_the_lengths(ws):
     result = ws.run('validate_output.py')
 
     assert "doesn't start where the event before it ends" in result.stdout
-
 
 
 def test_positions_of_a_long_index_follow_each_other_after_rounding():
