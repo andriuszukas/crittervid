@@ -169,7 +169,8 @@ order they play, one row each:
 
 The columns are described by a Table Schema, [docs/schemas/event-index.json](docs/schemas/event-index.json),
 the standard Camtrap DP uses. Without ffprobe, `offsetSeconds` and `durationSeconds` are left
-empty, because the lengths aren't known. Merged files made by earlier versions get their index
+empty, because the lengths aren't known; the next merge with ffprobe fills them in. A changed time
+zone, clock offset or series start rewrites the indexes it affects. Merged files made by earlier versions get their index
 on the next merge, without being merged again. Validation checks each index against its merged
 file ([decision record 0007](docs/decisions/0007-event-index.md)).
 

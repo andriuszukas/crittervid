@@ -52,6 +52,16 @@ def build(events, lengths, lead_in):
     return rows
 
 
+def describes(rows, events, lengths_known):
+    """Whether index rows describe these events (as build takes them) as build
+    would now: the same files in order, with the same start times (and UTC
+    offsets, so a changed time zone counts) and shifts, and with positions when
+    the lengths are known."""
+    return ([(r['eventStart'].isoformat(), r['filePath'], r['shiftSeconds']) for r in rows]
+            == [(start.isoformat(), path, shift) for start, path, shift in events]
+            and not (lengths_known and any(r['offsetSeconds'] is None for r in rows)))
+
+
 def _seconds(value):
     return '' if value is None else f'{value:.3f}'
 

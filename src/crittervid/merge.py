@@ -66,13 +66,8 @@ def write_index(out_path, files, spans, config, shifts):
     through a temporary file renamed into place: files are its (start, file)
     pairs in order, spans each file's video (start, length) or None. Returns
     whether it could be written."""
-    offset = config.clock_offset or 0
-    events = []
-    for _, f in files:
-        shift = shift_of(f, offset, shifts)
-        events.append((local_time(file_start(f) + shift, config.tz), source_name(f, config), shift))
     lead_in = max(spans[0][0], 0) if spans and spans[0] else 0
-    rows = index.build(events, [_end(span) for span in spans], lead_in)
+    rows = index.build(index_events(files, config, shifts), [_end(span) for span in spans], lead_in)
     path = index.path_for(out_path)
     tmp = path.with_name(path.name + '.part')
     try:
@@ -86,18 +81,32 @@ def write_index(out_path, files, spans, config, shifts):
         return False
 
 
-def index_current(out_path):
-    """Whether a merged file's event index is current: it's there, in this
-    version's format, and written since the merged file (whose own sources are
-    older, or it wouldn't be up to date). The index is its own cache, so
-    up-to-date merged files cost no probing."""
+def index_events(files, config, shifts):
+    """The events of a merged file's (start, file) pairs as index.build takes
+    them: when each file's footage really started, its path and its shift."""
+    offset = config.clock_offset or 0
+    events = []
+    for _, f in files:
+        shift = shift_of(f, offset, shifts)
+        events.append((local_time(file_start(f) + shift, config.tz), source_name(f, config), shift))
+    return events
+
+
+def index_current(out_path, files, config, shifts):
+    """Whether a merged file's event index is current: written since the merged
+    file, in this version's format, and describing its events as they'd be
+    written now (a changed time zone, clock offset or series start changes
+    them, even when the merged file itself stays). Positions it lacks are
+    written once ffprobe can measure them. Nothing here probes, so up-to-date
+    merged files with current indexes cost no probing."""
     path = index.path_for(out_path)
     try:
-        with open(path, encoding='utf-8') as f:
-            header = f.readline()
-        return index.has_current_header(header) and path.stat().st_mtime >= out_path.stat().st_mtime
-    except OSError:
+        if path.stat().st_mtime < out_path.stat().st_mtime:
+            return False
+        rows = index.read_csv(path.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, index.IndexFormatError):
         return False
+    return index.describes(rows, index_events(files, config, shifts), bool(get_ffprobe_path()))
 
 
 def up_to_date(out_path, sources, files, record, offsets, offset):
@@ -137,7 +146,7 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config, shift
         msg = f"SKIPPED: {out_path} is up to date ({len(files)} files)"
         say(msg, file=str(out_path))
         summary.append(msg)
-        if not index_current(out_path):   # e.g. made by a version without indexes
+        if not index_current(out_path, files, config, shifts):   # e.g. made by a version without indexes
             write_index(out_path, files, [video_span(f) for _, f in files], config, shifts)
         return out_path
     # Write to a temp file and rename on success, so a failed merge never leaves

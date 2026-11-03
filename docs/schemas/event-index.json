@@ -13,7 +13,7 @@
     {
       "name": "offsetSeconds",
       "type": "number",
-      "description": "Where it starts in the merged file, in seconds from the merged file's first frame; about +-20 ms. Empty if not known."
+      "description": "Where its slot starts in the merged file, in seconds from the merged file's first frame; about +-20 ms. A later file whose video starts late (by at most a fraction of a second) shows its first frame that much after its offset. Empty if not known."
     },
     {
       "name": "durationSeconds",

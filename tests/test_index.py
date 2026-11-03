@@ -95,9 +95,10 @@ def test_the_index_core_imports_only_the_standard_library():
     tree = ast.parse((REPO / 'src' / 'crittervid' / 'index.py').read_text(encoding='utf-8'))
     imported = {alias.name.split('.')[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
                 for alias in node.names}
-    imported |= {(node.module or '').split('.')[0] or '.' for node in ast.walk(tree)
-                 if isinstance(node, ast.ImportFrom)}
+    imported |= {(node.module or '').split('.')[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    relative = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.level]
 
+    assert relative == [], relative   # no CritterVid module, even one named like a standard one
     assert imported <= set(sys.stdlib_module_names) - {'subprocess', 'os', 'shutil', 'time'}, imported
 
 
@@ -227,7 +228,7 @@ def test_validation_warns_about_a_missing_index(ws):
 @pytest.mark.parametrize('change, problem', [
     (lambda rows: rows[::-1], "doesn't list the merged file's events in order"),
     (lambda rows: [{**rows[0], 'eventStart': rows[0]['eventStart'] + timedelta(hours=1)}, rows[1]], 'started at'),
-    (lambda rows: [{**rows[0], 'durationSeconds': 5.0}, rows[1]], 'its events add up to 6.00 s'),
+    (lambda rows: [rows[0], {**rows[1], 'durationSeconds': 5.0}], 'its events add up to 6.00 s'),
 ])
 def test_validation_warns_about_an_index_that_doesnt_fit(ws, change, problem):
     ws.add_media('0001.media', b'morning')
@@ -248,3 +249,95 @@ def test_validation_doesnt_take_an_index_for_an_unknown_file(ws):
     result = ws.run('validate_output.py')
 
     assert 'WARNING' not in result.stdout, result.stdout
+
+
+
+def test_a_changed_time_zone_rewrites_an_index_whose_merged_file_stays(ws):
+    ws.add_media('0001.media', b'morning')
+    ws.add_afternoon_media('0001.media', b'afternoon')
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+    ws.camera_timezone = 'Europe/London'   # same day, same contents: the merged file is up to date
+
+    result = ws.run('merge_videos.py')
+
+    assert 'SKIPPED' in result.stdout
+    [path] = indexes(ws).values()
+    assert [r['eventStart'].isoformat() for r in read(path)] == ['2025-10-01T07:26:41+01:00',
+                                                                 '2025-10-01T15:46:41+01:00']
+    assert 'WARNING' not in ws.run('validate_output.py').stdout
+
+
+def test_a_changed_series_start_rewrites_the_index_even_when_the_first_file_keeps_its_time(ws):
+    path = ws.root / 'input' / 'DCIM' / '1970' / '01' / '01' / '0000000001_0010' / '0001.media'
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'unset')
+    ws.add_media('0001.media', b'morning')   # 06:26:41, first in the merged file
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate',
+                  '--series-start', '0000000001_0010=2025-10-01T08:00').returncode == 0
+
+    result = ws.run('merge_videos.py', '--series-start', '0000000001_0010=2025-10-01T09:00')
+
+    assert 'SKIPPED' in result.stdout
+    [path] = indexes(ws).values()
+    assert read(path)[1]['eventStart'].isoformat() == '2025-10-01T09:00:01+00:00'
+
+
+def test_an_index_older_than_its_merged_file_is_written_again(ws):
+    ws.add_media('0001.media', b'morning')
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+    [merged] = ws.files('merged_*.mp4')
+    path = index.path_for(merged)
+    path.write_text(path.read_text(encoding='utf-8').replace(',1.000,', ',9.000,'), encoding='utf-8')
+    later = merged.stat().st_mtime + 10   # as if the merged file was made again after it
+    os.utime(path, (later - 20, later - 20))
+    os.utime(merged, (later, later))
+
+    ws.run('merge_videos.py')
+
+    assert read(path)[0]['durationSeconds'] == 1.0
+
+
+def test_the_index_takes_the_first_files_lead_in_from_its_measured_video(ws):
+    from crittervid import merge
+    from crittervid.config import PipelineConfig
+    ws.add_media('0001.media', b'morning')
+    ws.add_afternoon_media('0001.media', b'afternoon')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    config = PipelineConfig(output_dir=ws.root / 'output', timezone='UTC')
+    files = sorted((None, f) for f in ws.files('1759*_0001_0001.mp4'))
+    out_path = ws.root / 'output' / 'merged_test.mp4'
+
+    assert merge.write_index(out_path, files, [(0.8, 10.0), (0.0, 5.0)], config, None)
+
+    rows = read(index.path_for(out_path))
+    assert [(r['offsetSeconds'], r['durationSeconds']) for r in rows] == [(0.0, 10.0), (10.0, 5.0)]
+
+
+def test_an_index_that_cant_be_written_leaves_no_partial_file(ws, caplog):
+    from crittervid import merge
+    from crittervid.config import PipelineConfig
+    ws.add_media('0001.media', b'morning')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    out_path = ws.root / 'output' / 'merged_test.mp4'
+    index.path_for(out_path).mkdir()   # a folder where the index goes
+
+    written = merge.write_index(out_path, [(None, ws.files('*_0001_0001.mp4')[0])], [(0.0, 1.0)],
+                                PipelineConfig(output_dir=ws.root / 'output', timezone='UTC'), None)
+
+    assert not written
+    assert not list((ws.root / 'output').glob('*.part'))
+    assert "couldn't write the event index" in caplog.text
+
+
+def test_validation_warns_about_positions_that_dont_follow_the_lengths(ws):
+    ws.add_media('0001.media', b'morning')
+    ws.add_afternoon_media('0001.media', b'afternoon')
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+    [path] = indexes(ws).values()
+    rows = read(path)
+    rows[1] = {**rows[1], 'offsetSeconds': 0.5}
+    path.write_text(index.to_csv(rows), encoding='utf-8')
+
+    result = ws.run('validate_output.py')
+
+    assert "doesn't start where the event before it ends" in result.stdout
