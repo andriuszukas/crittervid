@@ -233,6 +233,9 @@ accel_display = st.selectbox("Hardware Acceleration", ["Auto", "CPU", "NVIDIA", 
 workers = st.number_input("Number of videos to process in parallel", min_value=1, max_value=32, value=4, help="Number of videos to process in parallel.")
 splits_per_day = st.number_input("How many mp4 files to generate per day?", min_value=1, max_value=24, value=1, help="Divides each day into this many equal time windows (2: 00:00-12:00 and 12:00-24:00), with one merged file for each window that has footage. Changing it and running again replaces each day's earlier merged files (files holding footage the new ones lack are kept, with a warning).")
 force_merge = st.checkbox("Merge everything again", help="Merged files whose events haven't changed since they were made are normally skipped. Tick this to make them all again, e.g. after upgrading to a version that merges differently.", value=False)
+chapters = st.checkbox("Add a chapter for each event", value=True,
+                       help="Players such as VLC list the chapters of a merged file and jump between its events. "
+                            "Files merged before keep what they have; tick \"Merge everything again\" to remake them.")
 validate = st.checkbox("Validate output after processing", help="Check that the outputs have video and audio of the right length and that merged days are complete. Takes seconds.", value=True)
 
 st.header("Run Pipeline")
@@ -259,6 +262,8 @@ if run_clicked and not series_problem:
         cmd.append("--force-merge")
     if not validate:
         cmd.append("--no-validate")
+    if not chapters:
+        cmd.append("--no-chapters")
     # --name=value, so a value starting with '-' isn't taken for an option
     if timezone != NO_TIME_ZONE:
         cmd.append(f"--timezone={timezone}")

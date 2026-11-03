@@ -220,3 +220,18 @@ def test_gui_doesnt_run_with_a_series_start_it_cant_use(gui, ws):
 
     assert any('Fix the series starts' in e.value for e in at.error)
     assert not at.success and not (ws.root / 'output' / 'conversion_summary.txt').exists()
+
+
+def test_gui_can_leave_chapters_out(gui, ws):
+    ws.add_media('0001.media', b'good')
+    gui.text_input[0].input(str(ws.root / 'input' / 'DCIM'))
+    gui.text_input[1].input(str(ws.root / 'output'))
+    gui.selectbox[1].select('CPU')
+    [box] = [c for c in gui.checkbox if c.label == 'Add a chapter for each event']
+    assert box.value is True   # on by default (decision record 0007)
+    box.uncheck()
+
+    at = [b for b in gui.button if b.label == 'Run'][0].click().run(timeout=RUN_TIMEOUT)
+
+    assert not at.exception
+    assert '--no-chapters' in run_command(at)

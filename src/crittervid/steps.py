@@ -52,7 +52,9 @@ def _convert_summary(config, ran, dry_run):
 
 def _merge_options(config):
     args = ['--output-dir', str(config.output_dir), '--splits-per-day', str(config.splits_per_day)]
-    return args + (['--force'] if config.force_merge else []) + deployment.options(config)
+    args += ['--force'] if config.force_merge else []
+    args += [] if config.chapters else ['--no-chapters']
+    return args + deployment.options(config)
 
 
 def _merge_prepare(config):

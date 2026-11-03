@@ -51,6 +51,8 @@ def main(argv=None):
     parser.add_argument('--deep-validate', action='store_true', help='Also decode every output in full during validation (slow: about as long as the footage).')
     parser.add_argument('--force-merge', action='store_true', help='Merge every part again, including ones '
                         'that are already up to date (forwarded to merge_videos.py as --force).')
+    parser.add_argument('--no-chapters', dest='chapters', action='store_false',
+                        help="Don't add a chapter for each event to the merged files (forwarded to the merge).")
     parser.add_argument('--splits-per-day', type=int, default=None, help='Number of equal time windows to divide each day into, one merged file per window with '
                              'events (1 to 1440; forwarded to merge_videos.py).')
     deployment.add_options(parser)
@@ -62,7 +64,8 @@ def main(argv=None):
                             workers=4 if args.workers is None else args.workers, copy=args.copy,
                             retry_failed=args.retry_failed, max_retries=args.max_retries,
                             splits_per_day=1 if args.splits_per_day is None else args.splits_per_day,
-                            force_merge=args.force_merge, deep_validate=args.deep_validate,
+                            force_merge=args.force_merge, chapters=args.chapters,
+                            deep_validate=args.deep_validate,
                             timezone=args.timezone, clock_offset=args.clock_offset, site=args.site,
                             camera=args.camera,
                             series=tuple(args.series_start) if args.series_start else None)

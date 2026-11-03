@@ -123,3 +123,22 @@ def test_the_event_index_matches_the_merged_file(real_ws):
                           '-of', 'csv=p=0', str(merged)], capture_output=True, text=True, check=True).stdout
     assert abs(sum(r['durationSeconds'] for r in rows) - float(out)) < 0.05
     assert rows[1]['offsetSeconds'] == pytest.approx(rows[0]['durationSeconds'])
+
+
+def test_merged_files_have_a_chapter_for_each_event(real_ws):
+    # Decision record 0007: chapters from the index, ending at the video's end,
+    # without disturbing the merged file's creation_time
+    make_clip(real_ws, '0000.media')
+    make_clip(real_ws, '0013.media')
+
+    assert real_ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+
+    [merged] = real_ws.files('merged_*.mp4')
+    out = subprocess.run(['ffprobe', '-v', 'error', '-show_chapters', '-show_entries', 'format=duration',
+                          '-of', 'json', str(merged)], capture_output=True, text=True, check=True).stdout
+    info = json.loads(out)
+    chapters = info['chapters']
+    assert [c['tags']['title'] for c in chapters] == ['06:26:40', '06:26:53']
+    assert float(chapters[0]['start_time']) == 0
+    assert abs(float(chapters[-1]['end_time']) - float(info['format']['duration'])) < 0.1
+    assert creation_time(merged) == '2025-10-01T06:26:40.000000Z'
