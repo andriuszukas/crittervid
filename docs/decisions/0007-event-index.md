@@ -7,59 +7,75 @@
 ## Context
 
 - **The problem:** a merged file joins a day's events back to back, without the gaps between them. A position in the file no longer tells you the real time, or which event you're watching.
-- **What exists:**
-  - Each day's `merged_contents.json` records which converted files each merged file holds, but not where each one sits in it.
-  - That record is the merge's own bookkeeping: it decides which files are up to date (#88) and which can be removed (#78). It isn't a document for people or other tools.
-- **What the merge already knows:** it ends each converted file where its video ends, measured with ffprobe (`video_end`). So each event's position in the merged file is the sum of the lengths before it. Without ffprobe those lengths aren't known.
+- **What exists:** each day's `merged_contents.json` records which converted files each merged file holds, but not where each one sits in it. That record is the merge's own bookkeeping: it decides which files are up to date (#88) and which can be removed (#78). It isn't a document for people or other tools.
+- **What the merge already knows:**
+  - It ends each converted file where its video ends, measured with ffprobe (`video_end`: the video's start plus its length).
+  - The concat list gives each file `inpoint 0`, `outpoint` and `duration`, so each file starts where the one before ended.
+  - A merged file starts at its first frame, as validation already assumes.
+  - So an event's position is the sum of the earlier files' `video_end` values, minus the first file's lead-in (its video's start, when that's above 0).
+  - It's accurate to about ±20 ms: that's the drift validation allows for merged days. Audio can differ by up to 0.2 s, as now.
+  - Without ffprobe the lengths aren't known.
 
 ## Decision
 
 ### One public document per merged file: the event index
 
-- **Where it goes:** next to each merged file, `merged_….mp4` gets `merged_….events.csv`. It has one row per event, in the order they play.
+- **Where it goes:** next to each merged file, `merged_….mp4` gets `merged_….events.csv`, with one row per event in the order they play.
 - **It's public.** People, validation and later exports (#50, #51) read it. It stays separate from `merged_contents.json`, which remains the merge's private record, so either can change without breaking the other.
-- **Format: CSV described by a Frictionless Table Schema.** That's the standard Camtrap DP is built on, so the Camtrap DP export (#50) can use the rows directly. The schema is published as `docs/schemas/event-index.json`, versioned like the other documents.
-- **Columns:**
+- **Format: CSV with a Frictionless Table Schema,** the standard Camtrap DP is built on.
+  - The schema is `docs/schemas/event-index.json`. Its fields are the contract: a reader checks the CSV's header against them. It has a version, raised when a column's meaning changes.
+  - Column names follow Camtrap DP's style, so #50 can map them directly:
 
-| Column | Meaning |
-|---|---|
-| `fragment` | the event's place in the merged file, as a W3C Media Fragment: `merged_….mp4#t=1234.567,1836.890`. A standard way to address part of a file, which players and exporters understand. |
-| `offset_s`, `duration_s` | the same, as numbers (seconds from the file's start, and length) |
-| `start` | when the event started, in ISO 8601 with its UTC offset, in the camera's time zone (0005), such as `2025-10-01T08:26:41+03:00` |
-| `source` | the converted file, relative to the output folder |
-| `shift_s` | what was added to the camera's time: the clock offset (0005), or the series' shift (0006). It's data, so a reader can tell corrected times apart without knowing why. |
+| Column | Type | Meaning |
+|---|---|---|
+| `eventStart` | datetime | when the event started: ISO 8601 with its UTC offset, in the camera's time zone (0005), such as `2025-10-01T08:26:41+03:00` |
+| `offsetSeconds` | number | where it starts in the merged file, in seconds from the file's first frame |
+| `durationSeconds` | number | how long it plays there |
+| `filePath` | string | the converted file, relative to the output folder |
+| `shiftSeconds` | integer | what was added to the camera's time: the clock offset (0005), or the series' shift (0006). It's data, so a reader can tell corrected times apart without knowing why. |
 
-- **No ffprobe:** the index is still written, with `offset_s`, `duration_s` and `fragment` left empty, and the merge warns once. An empty value is truthful; a guessed one wouldn't be.
+- **Positions** aren't stored a second time, such as a W3C Media Fragment (`merged_….mp4#t=a,b`). A reader that needs one makes it from `offsetSeconds` and `durationSeconds`, so there's one source of truth.
+- **When a length isn't known** (no ffprobe, or a file it can't read), every later position is unknown too. So the index is written with `offsetSeconds` and `durationSeconds` empty for all rows, which the schema declares as missing values. The merge warns once. An empty value is truthful; a guessed one wouldn't be.
 
-### MP4 chapters, derived from the index
+### MP4 chapters, rendered from the index
 
-- **What they are:** when the merge writes a merged file, it also embeds one chapter per event. Players such as VLC show them by name and let you jump between events. Each chapter is named by its local start time, such as `08:26:41`.
-- **Same source:** they're rendered from the same index rows, so the two can't disagree. FFmpeg writes them from a metadata file, with no new dependency.
+- **What they are:** when the merge writes a merged file, it can embed one chapter per event, from the same rows. Players such as VLC list them and let you jump between events. Each chapter is named by its local start time, such as `08:26:41`.
+- **How FFmpeg gets them:**
+  - The rows go into an FFmpeg metadata file, passed as an extra input with `-map_chapters 1`.
+  - It uses `TIMEBASE=1/1000`, with each chapter's end after its start, and escapes the special characters in titles.
+  - The global metadata isn't copied from it, so the merged file's `creation_time` stays as it is. A test checks that.
 - **Optional:** `--no-chapters` (a GUI checkbox) leaves them out. Whether they're on by default is question 2.
+- **No index, no chapters:** without known lengths, the merged file gets no chapters.
 
 ### Decisions apart from effects
 
 - **The pure core:** a new module, `crittervid/index.py`, holds pure functions:
-  - `build(sources, lengths, shifts, tz)` returns index rows from the ordered sources, their measured lengths, the shifts and the time zone;
+  - `build(starts, lengths, lead_in, shifts)` takes the events' corrected start times (the merge already has them from `group_files_by_day`), their measured lengths, the first file's lead-in and their shifts, and returns the index rows.
   - `to_csv(rows)` and `to_chapters(rows)` render them.
-  - They don't touch files, FFmpeg or the clock, so the same inputs always give the same index.
-- **The shell:** the merge stays the shell. It measures lengths (as now), calls `build`, writes the CSV next to the merged file, and passes the chapters to FFmpeg.
-- **Dependencies:** `index.py` depends only on `names.py` (times) and the standard library, never on `merge.py`. Validation reads the CSV, the public document, rather than calling the merge.
+  - They don't touch files, FFmpeg or the clock, and they don't redo time correction, so the same inputs always give the same index.
+  - `index.py` imports only the standard library.
+- **The shell:** the merge stays the shell.
+  - It keeps the `video_end` values it already measures for the concat list, so a new merge needs no extra probing.
+  - It calls `build`, writes the CSV next to the merged file, and passes the chapters to FFmpeg.
+- **Validation** reads the CSV, the public document, rather than calling the merge.
 
-### Kept current, without needless re-merging
+### Kept current, without needless work
 
-- **Made with the merged file:** the index is written whenever its merged file is made, through a temporary file renamed into place, after the MP4.
-- **Up-to-date merged files** that have no index, or an older-schema one, get one written. That needs only the converted files' lengths, not a new merge. Existing outputs get indexes on the next run, without re-encoding.
-- **Chapters** are only in files made from now on. `--force` remakes the merged files to add them.
-- **Removed together:** a merged file the merge removes takes its index with it.
+- **Made with the merged file:** the index is written after its merged file, through a temporary file renamed into place. If the run stops in between, the merged file has no index, and the next run writes it.
+- **When an index counts as current:** it exists, its header matches the schema, and it's newer than its merged file and its sources, the same test as for merged files (#88). That makes the CSV its own cache, so up-to-date merged files cost no probing on later runs.
+- **Missing or outdated indexes** are written again from the converted files' lengths, without merging again. Existing outputs get their indexes on the next run, without re-encoding.
+- **Chapters** are only in files merged from now on. `--force` remakes merged files to add them.
+- **Cleanup and names:**
+  - A merged file the merge removes takes its index with it, and the index is forgotten when its merged file is gone.
+  - Validation's name check and the regrouped-days report recognize `.events.csv` files, so they aren't reported as unknown.
 
 ### Validation
 
-- **Each merged file's index is checked:**
+- **Each merged file's index is checked,** using the probes validation already makes:
   - its rows are the merged file's sources, in order;
-  - the lengths add up to the merged file's length, within the tolerance used for merged days now;
+  - its lengths add up to the merged file's length, within the existing tolerance;
   - its starts match the corrected event times.
-- **A missing or stale index** is a warning: the next merge writes it.
+- **A missing or outdated index** is a warning: the next merge writes it.
 
 ## Plan: two PRs
 
@@ -67,21 +83,26 @@
    - `index.py` with its tests, which run on plain data with no files;
    - the schema;
    - the merge writing and refreshing indexes;
-   - validation checking them;
+   - the cleanup;
+   - validation's checks;
    - docs.
-2. **Chapters:** the rendering, the merge passing it to FFmpeg, `--no-chapters` and the GUI checkbox, and a real-FFmpeg test that the chapters are in the file.
+2. **Chapters:**
+   - the rendering;
+   - the merge passing it to FFmpeg;
+   - `--no-chapters` and the GUI checkbox;
+   - real-FFmpeg tests that the chapters are in the file, end at the video's end, and leave `creation_time` as it was.
 
 ## How this follows the dev principles
 
-- **Shared representation:** one public document per merged file, in a standard format (a Frictionless table, as in Camtrap DP). It uses a standard address for a part of a file (Media Fragments) and standard time stamps (ISO 8601 with offset). The merge's private record stays private.
-- **Meaning as data:** corrections show up as `shift_s`. Chapters are a rendering of the same data, not a second source of truth.
-- **Decisions apart from effects:** `index.py` is pure; the merge performs the effects.
-- **Dependencies:** `index.py` depends on `names.py` only. A test in the suite checks that it imports nothing from `merge`, `convert`, `validate`, the GUI or `subprocess`.
-- **Optional costs:** chapters can be turned off; the index needs no new dependency. Frictionless is used only by the tests that check the CSV against its schema, as a dev dependency.
-- **Compatibility:** an additive change. Existing outputs get indexes without being re-merged. The schema has a version for later changes.
+- **Shared representation:** one public document per merged file, in a standard format (a Frictionless table, as in Camtrap DP, with its column style) and with standard times (ISO 8601 with offset). Its schema is the contract. The merge's private record stays private.
+- **Meaning as data:** corrections show up as `shiftSeconds`. Chapters are a rendering of the same rows, not a second source of truth. Positions are stored once.
+- **Decisions apart from effects:** `index.py` is pure and takes the facts it needs as inputs. The merge performs the effects.
+- **Executable rules:** a test in the suite checks that `index.py` imports only the standard library. Another checks every written index's header against the schema file.
+- **Optional costs:** chapters can be turned off, and nothing adds a dependency. The schema check is a short hand-written test, not Frictionless, which can wait until #50 needs it. That also keeps the set of pinned inputs small.
+- **Compatibility:** an additive change. Existing outputs get indexes without being merged again, and the schema's version covers later changes.
 
 ## Questions for you
 
-1. **One index per merged file, next to it (`merged_….events.csv`)?** Recommended: it travels with its video. The alternative is one index per day, covering all of that day's merged files.
-2. **Chapters on by default, with `--no-chapters` to leave them out?** Recommended: they cost nothing at merge time and make long merged files easy to move around in. The alternative is off by default, on with `--chapters`.
-3. **Frictionless as a dev dependency, to check the CSV against its schema in tests?** Recommended: it's what Camtrap DP uses, and #50 needs it anyway. The alternative is a hand-written check of the columns, with no new dependency.
+1. **One index per merged file, next to it (`merged_….events.csv`)?** Recommended: it travels with its video. The alternative is one index per day, covering all of that day's merged files, with a column for the merged file.
+2. **Chapters on by default, with `--no-chapters` to leave them out?** Recommended: they make long merged files easy to move around in, and they cost nothing at merge time. The alternative is off by default (`--chapters`) until they've been tried in more players.
+3. **Check the CSV against its schema with a hand-written test, and leave Frictionless until the Camtrap DP export (#50)?** Recommended: no new dependency for now. The alternative is adding Frictionless as a dev dependency now.
