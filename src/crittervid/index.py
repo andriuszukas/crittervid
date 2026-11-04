@@ -80,6 +80,29 @@ def misplaced(rows):
     return None
 
 
+def _escape(text):
+    # FFmpeg's metadata files give '=', ';', '#', '\\' and line breaks a meaning
+    for char in '\\=;#\n':
+        text = text.replace(char, '\\' + char)
+    return text
+
+
+def to_chapters(rows):
+    """An FFmpeg metadata file with one chapter per row, named by its local
+    start time (such as 08:26:41), in milliseconds; None if the positions
+    aren't known. Rendered from the index rows, so the chapters and the index
+    can't disagree."""
+    if not rows or any(row['offsetSeconds'] is None for row in rows):
+        return None
+    lines = [';FFMETADATA1']
+    for row in rows:
+        start = round(row['offsetSeconds'] * 1000)
+        end = max(round((row['offsetSeconds'] + row['durationSeconds']) * 1000), start + 1)
+        lines += ['[CHAPTER]', 'TIMEBASE=1/1000', f'START={start}', f'END={end}',
+                  f"title={_escape(row['eventStart'].strftime('%H:%M:%S'))}"]
+    return '\n'.join(lines) + '\n'
+
+
 def _seconds(value):
     return '' if value is None else f'{value:.3f}'
 

@@ -61,13 +61,18 @@ def _end(span):
     return None if span is None else max(span[0], 0) + span[1]
 
 
-def write_index(out_path, files, spans, config, shifts):
-    """Write a merged file's event index (decision record 0007) next to it,
-    through a temporary file renamed into place: files are its (start, file)
-    pairs in order, spans each file's video (start, length) or None. Returns
-    whether it could be written."""
+def index_rows(files, spans, config, shifts):
+    """A merged file's event index rows (decision record 0007): files are its
+    (start, file) pairs in order, spans each file's video (start, length) or
+    None."""
     lead_in = max(spans[0][0], 0) if spans and spans[0] else 0
-    rows = index.build(index_events(files, config, shifts), [_end(span) for span in spans], lead_in)
+    return index.build(index_events(files, config, shifts), [_end(span) for span in spans], lead_in)
+
+
+def write_index(out_path, files, spans, config, shifts):
+    """Write a merged file's event index next to it, through a temporary file
+    renamed into place. Returns whether it could be written."""
+    rows = index_rows(files, spans, config, shifts)
     path = index.path_for(out_path)
     tmp = path.with_name(path.name + '.part')
     try:
@@ -179,15 +184,36 @@ def merge_group(start, end, files, summary, record, offsets, k, n, config, shift
             video_stop = _end(spans[-1])
             if video_stop:
                 f.write(f"outpoint {video_stop:.6f}\nduration {video_stop:.6f}\n")
+    # One chapter per event, from the same rows as the index (decision record
+    # 0007), as a second input whose chapters (only) are taken: the merged file's
+    # other metadata, such as creation_time, stays as set here
+    chapters, chapters_path = None, out_dir / f"chapters_{out_path.stem}.txt"
+    if config.chapters:
+        chapters = index.to_chapters(index_rows(files, spans, config, shifts))
+        if chapters:
+            try:
+                chapters_path.write_text(chapters, encoding='utf-8')
+            except OSError as e:   # the merged file is still worth making, without chapters
+                say(f"WARNING: couldn't write the chapters for {out_name} ({e}); merging it without them",
+                    file=str(out_path))
+                chapters = None
+    chapter_args = ['-f', 'ffmetadata', '-i', media_arg(chapters_path), '-map_chapters', '1'] if chapters else []
     # Copy the video; re-encode the audio once, so the small padding at the start
     # of each segment's AAC track doesn't add up into drift over a long merge
-    cmd = [get_ffmpeg_path(), '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), '-c:v', 'copy', '-c:a', 'aac',
+    cmd = [get_ffmpeg_path(), '-y', '-f', 'concat', '-safe', '0', '-i', media_arg(filelist_path), *chapter_args,
+           '-map', '0:v', '-map', '0:a?', '-c:v', 'copy', '-c:a', 'aac',
            *creation_time(files[0][1], offset), '-f', 'mp4', media_arg(tmp_path)]
     started = time.monotonic()
     _log.debug(f'FFmpeg: {log.command_line(cmd)}', extra={'file': str(out_path)})
-    result = subprocess.run(cmd, capture_output=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True)
+    finally:   # also when the run is stopped
+        for temporary in (filelist_path, chapters_path):
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
     took = {'file': str(out_path), 'duration_s': round(time.monotonic() - started, 3)}
-    filelist_path.unlink()
     if result.returncode != 0:
         tmp_path.unlink(missing_ok=True)
         last, tail = log.ffmpeg_failure(result.stderr)
@@ -436,12 +462,16 @@ def main(argv=None):
     parser.add_argument('--force', action='store_true', help='Merge every part again, including ones that are '
                         'already up to date (by default they are skipped), e.g. after upgrading to a '
                         'version that merges differently.')
+    parser.add_argument('--no-chapters', dest='chapters', action='store_false',
+                        help="Don't add a chapter for each event to the merged files (they're added by default; "
+                             "files merged before keep theirs)")
     deployment.add_options(parser)
     parser.add_argument('--verbose', action='store_true', help='Also show details on the console (they are always in the logs).')
     args = parser.parse_args(argv)
 
     # Update global paths based on arguments
     config = PipelineConfig(output_dir=args.output_dir, splits_per_day=args.splits_per_day, force_merge=args.force,
+                            chapters=args.chapters,
                             timezone=args.timezone, clock_offset=args.clock_offset, site=args.site, camera=args.camera,
                             series=tuple(args.series_start) if args.series_start else None)
     log.start_run(config, 'merge', verbose=args.verbose)

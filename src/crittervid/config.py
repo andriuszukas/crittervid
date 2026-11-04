@@ -45,6 +45,7 @@ class PipelineConfig:
     max_retries: int = 3
     splits_per_day: int = 1
     force_merge: bool = False
+    chapters: bool = True   # a chapter for each event in merged files (decision record 0007)
     deep_validate: bool = False
     # Deployment details (crittervid.deployment): None when not given, which
     # settling fills from <output>/deployment.json

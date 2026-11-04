@@ -174,6 +174,13 @@ zone, clock offset or series start rewrites the indexes it affects. Merged files
 on the next merge, without being merged again. Validation checks each index against its merged
 file ([decision record 0007](docs/decisions/0007-event-index.md)).
 
+Merged files also get a chapter for each event, named by its local start time, from the same
+rows: players such as VLC list them and jump between events. `--no-chapters` (with `crittervid
+run` or `merge`; a checkbox in the GUI) leaves them out. Files merged before keep what they have;
+merge with `--force` to remake them with chapters. Without ffprobe there are no chapters, as the
+positions aren't known. Some players read only the first 255 chapters of a file; the event index
+lists every event.
+
 ### Events recorded before the camera's clock was set
 
 A camera whose clock wasn't set counts from 0 when it's switched on, so its events show up on the

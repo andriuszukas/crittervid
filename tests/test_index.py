@@ -358,3 +358,94 @@ def test_the_first_event_starts_at_the_beginning():
     rows = index.build([event(0), event(600)], [10.0, 5.0], 0)
 
     assert index.misplaced([{**rows[0], 'offsetSeconds': 1.0}, {**rows[1], 'offsetSeconds': 11.0}]) is not None
+
+
+# --- Chapters, rendered from the index (PR 2) ---
+
+def test_chapters_have_one_entry_per_row_in_milliseconds():
+    rows = index.build([event(0), event(600)], [10.0, 5.5], 0)
+
+    assert index.to_chapters(rows) == (';FFMETADATA1\n'
+                                       '[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=10000\ntitle=06:26:41\n'
+                                       '[CHAPTER]\nTIMEBASE=1/1000\nSTART=10000\nEND=15500\ntitle=06:36:41\n')
+
+
+def test_a_chapter_always_ends_after_it_starts():
+    rows = index.build([event(0)], [0.0001], 0)
+
+    assert 'START=0\nEND=1\n' in index.to_chapters(rows)
+
+
+def test_no_positions_no_chapters():
+    assert index.to_chapters(index.build([event(0)], [None], 0)) is None
+    assert index.to_chapters([]) is None
+
+
+def test_chapter_titles_escape_what_ffmetadata_gives_a_meaning():
+    assert index._escape('a=b;c#d\\e\nf') == r'a\=b\;c\#d\\e' + '\\\nf'
+
+
+def chapter_files(ws):
+    log = Path(ws.env['FAKE_FFMPEG_LOG'])
+    return [f.read_text(encoding='utf-8') for f in sorted(log.parent.glob(log.name + '-ffmeta.*'))]
+
+
+def test_the_merge_gives_ffmpeg_a_chapter_for_each_event(ws):
+    ws.env['FAKE_FFMPEG_LOG'] = str(ws.root / 'calls')
+    ws.add_media('0001.media', b'morning')
+    ws.add_afternoon_media('0001.media', b'afternoon')
+
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate').returncode == 0
+
+    [chapters] = chapter_files(ws)
+    assert chapters.count('[CHAPTER]') == 2
+    assert 'START=0\nEND=1000\ntitle=06:26:41' in chapters and 'START=1000\nEND=2000\ntitle=14:46:41' in chapters
+    [merge_call] = [c for c in ws.ffmpeg_calls() if 'concat' in c]
+    assert merge_call[merge_call.index('-map_chapters') + 1] == '1'
+    # Only its chapters: the merged file's metadata (creation_time) comes from the joined files
+    assert '-map_metadata' not in merge_call
+    # The joined files' streams only, as without chapters (the metadata input has none)
+    maps = [merge_call[i + 1] for i, arg in enumerate(merge_call) if arg == '-map']
+    assert maps == ['0:v', '0:a?']
+    assert not list((ws.root / 'output' / 'merged').rglob('chapters_*.txt'))   # removed after
+
+
+def test_no_chapters_leaves_them_out(ws):
+    ws.env['FAKE_FFMPEG_LOG'] = str(ws.root / 'calls')
+    ws.add_media('0001.media', b'morning')
+
+    assert ws.run('process_all.py', '--accel', 'cpu', '--no-validate', '--no-chapters').returncode == 0
+
+    assert chapter_files(ws) == []
+    [merge_call] = [c for c in ws.ffmpeg_calls() if 'concat' in c]
+    assert 'ffmetadata' not in merge_call and '-map_chapters' not in merge_call
+    assert '--no-chapters' in ws.run('process_all.py', '--dry-run', '--no-chapters').stdout
+
+
+
+def test_chapter_times_are_rounded_to_the_nearest_millisecond():
+    rows = index.build([event(0), event(600)], [1.0006, 2.0], 0)
+
+    assert 'START=0\nEND=1001\n' in index.to_chapters(rows) and 'START=1001\nEND=3001\n' in index.to_chapters(rows)
+
+
+def test_chapters_that_cant_be_written_leave_the_merge_without_them(ws, monkeypatch, fake_ffmpeg_dir, caplog):
+    from crittervid import merge
+    from crittervid.config import PipelineConfig
+    suffix = '.bat' if os.name == 'nt' else ''
+    monkeypatch.setattr(merge, 'get_ffmpeg_path', lambda: str(fake_ffmpeg_dir / f'ffmpeg{suffix}'))
+    monkeypatch.setattr(merge, 'get_ffprobe_path', lambda: str(fake_ffmpeg_dir / f'ffprobe{suffix}'))
+    ws.add_media('0001.media', b'morning')
+    assert ws.run('convert_media.py', '--accel', 'cpu').returncode == 0
+    real_write = Path.write_text
+
+    def write_text(path, *args, **kwargs):
+        if path.name.startswith('chapters_'):
+            raise PermissionError('no room')
+        return real_write(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'write_text', write_text)
+
+    assert merge.run(PipelineConfig(output_dir=ws.root / 'output', timezone='UTC')) == 0
+
+    assert len(ws.files('merged_*.mp4')) == 1
+    assert "couldn't write the chapters" in caplog.text

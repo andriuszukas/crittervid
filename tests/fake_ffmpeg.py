@@ -10,7 +10,8 @@ command lines the pipeline builds to simulate success and failure:
 
 If FAKE_FFMPEG_LOG is set, each command line is written as JSON to its own file
 named <FAKE_FFMPEG_LOG>.<pid>.<id>. A concat list is also copied to
-<FAKE_FFMPEG_LOG>-concat.<pid>.<id>, directives included (merge deletes its list).
+<FAKE_FFMPEG_LOG>-concat.<pid>.<id>, directives included (merge deletes its list),
+and an ffmetadata input (chapters) to <FAKE_FFMPEG_LOG>-ffmeta.<pid>.<id>.
 
 If FAKE_FFMPEG_FAIL_HWACCEL is set, any call with -hwaccel fails, like a machine
 whose GPU can't decode the file.
@@ -106,6 +107,12 @@ def main():
         with open(in_path, 'rb') as f:
             sys.exit(0 if f.read().startswith(b'OK') else 1)
 
+    if os.environ.get('FAKE_FFMPEG_LOG') and 'ffmetadata' in args:
+        meta = args[args.index('ffmetadata') + 2]   # -f ffmetadata -i <file>
+        with open(meta, encoding='utf-8') as source, \
+                open(f"{os.environ['FAKE_FFMPEG_LOG']}-ffmeta.{os.getpid()}.{uuid.uuid4().hex}", 'w',
+                     encoding='utf-8') as copy:
+            copy.write(source.read())
     if '-f' in args and args[args.index('-f') + 1] == 'concat':
         data = b''
         if os.environ.get('FAKE_FFMPEG_LOG'):
