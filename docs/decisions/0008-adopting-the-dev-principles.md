@@ -1,6 +1,6 @@
 # 0008: Adopting the dev principles in the existing code
 
-- **Status:** proposed (2026-11-04)
+- **Status:** accepted (2026-11-04)
 - **Principles:** the project's dev principles, "Growing without weaving". This record says where the code already follows them, where it doesn't, and how it gets there in small steps, each a PR of its own.
 
 ## Where the code stands
@@ -149,7 +149,7 @@
 
 Each step updates this record's status line, so the stated design and the enforced one agree.
 
-## Questions for you
+## Questions (answered: yes to all three)
 
 1. **This order, with the layer rules first and the cheap pins second?** Recommended: they protect the current shape and close the easiest gaps before anything moves. The alternative is the merge planner first, since it's the visible design change.
 2. **`uv` for the lock files?** Recommended: one universal lock covers the supported systems, with hashes. uv is pinned by hash and needed only to make the locks. The alternative is pip-tools, with one lock per system, because it resolves only for the system it runs on.
